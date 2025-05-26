@@ -99,7 +99,7 @@ fun ExpenseItem(
                     )
                 }
 
-                if (expense.receiptImageUrl != null && expense.receiptImageUrl.isNotEmpty()) {
+                if (expense.receiptImageUrl != null && expense.receiptImageUrl!!.isNotEmpty()) {
                     Badge(
                         containerColor = MaterialTheme.colorScheme.tertiary
                     ) {
