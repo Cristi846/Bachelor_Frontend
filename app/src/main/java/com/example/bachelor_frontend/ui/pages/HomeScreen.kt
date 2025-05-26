@@ -1,12 +1,14 @@
 package com.example.bachelor_frontend.ui.pages
 
-import android.os.Build
-import androidx.annotation.RequiresApi
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.CameraAlt
+import androidx.compose.material.icons.filled.Chat
+import androidx.compose.material.icons.filled.InsertChart
+import androidx.compose.material.icons.filled.QrCode2
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -26,7 +28,8 @@ fun HomeScreen(
     monthlyBudget: Double,
     onAddExpenseClick: () -> Unit,
     onExpenseClick: (ExpenseDto) -> Unit,
-    onScanReceiptClick: () -> Unit
+    onScanReceiptClick: () -> Unit,
+    onChatExpenseClick: () -> Unit = {}
 ) {
     val currentMonth = remember { LocalDateTime.now().month }
     val currentYear = remember { LocalDateTime.now().year }
@@ -60,14 +63,24 @@ fun HomeScreen(
         floatingActionButton = {
             Column {
                 SmallFloatingActionButton(
-                    onClick = { onScanReceiptClick() },
+                    onClick = {onChatExpenseClick()},
                     containerColor = MaterialTheme.colorScheme.secondary,
                     contentColor = MaterialTheme.colorScheme.onSecondary,
+                    modifier = Modifier.padding(bottom = 8.dp)
+                ) {
+                    Icon(Icons.Default.Chat, contentDescription = "Chat Expense")
+                }
+                // Receipt Scanner Button
+                SmallFloatingActionButton(
+                    onClick = { onScanReceiptClick() },
+                    containerColor = MaterialTheme.colorScheme.tertiary,
+                    contentColor = MaterialTheme.colorScheme.onTertiary,
                     modifier = Modifier.padding(bottom = 16.dp)
                 ) {
-                    Text("QR")
+                    Icon(Icons.Default.CameraAlt, contentDescription = "Scan Receipt")
                 }
 
+                // Add Expense Button
                 FloatingActionButton(
                     onClick = { onAddExpenseClick() },
                     containerColor = MaterialTheme.colorScheme.primary,
@@ -134,8 +147,23 @@ fun HomeScreen(
                                 style = MaterialTheme.typography.bodyLarge
                             )
                             Spacer(modifier = Modifier.height(8.dp))
-                            Button(onClick = onAddExpenseClick) {
-                                Text("Add Your First Expense")
+
+                            Row(
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                Button(onClick = onAddExpenseClick) {
+                                    Text("Add Expense")
+                                }
+
+                                OutlinedButton(onClick = onScanReceiptClick) {
+                                    Icon(
+                                        Icons.Default.CameraAlt,
+                                        contentDescription = "Scan Receipt",
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Text("Scan Receipt")
+                                }
                             }
                         }
                     }
