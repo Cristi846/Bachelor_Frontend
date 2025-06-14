@@ -43,7 +43,6 @@ class UserViewModel : ViewModel() {
     private val _categories = MutableStateFlow<List<String>>(emptyList())
     val categories: StateFlow<List<String>> = _categories.asStateFlow()
 
-    // Add the categoryBudgets StateFlow
     private val _categoryBudgets = MutableStateFlow<Map<String, Double>>(emptyMap())
     val categoryBudgets: StateFlow<Map<String, Double>> = _categoryBudgets.asStateFlow()
 
@@ -56,7 +55,6 @@ class UserViewModel : ViewModel() {
     private val _error = MutableStateFlow<String?>(null)
     val error: StateFlow<String?> = _error.asStateFlow()
 
-    // Shared update listener for ExpenseViewModel
     private val _updateTrigger = MutableStateFlow(0)
     val updateTrigger: StateFlow<Int> = _updateTrigger.asStateFlow()
 
@@ -262,6 +260,17 @@ class UserViewModel : ViewModel() {
             withContext(Dispatchers.IO) {
                 currentUser.updateProfile(profileUpdates).await()
                 currentUser.reload().await() // Reload to ensure changes are reflected
+            }
+
+            withContext(Dispatchers.IO){
+                try {
+                    db.collection("users")
+                        .document(currentUser.uid)
+                        .update("name", newName)
+                        .await()
+                }catch (e: Exception){
+                    throw e
+                }
             }
 
             _userName.value = newName
