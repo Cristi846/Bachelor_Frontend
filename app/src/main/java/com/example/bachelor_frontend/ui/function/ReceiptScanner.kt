@@ -57,37 +57,41 @@ class ReceiptScanner(private val context: Context) {
         )
     )
 
-    // Enhanced total patterns with more variations
     private val romanianTotalPatterns = listOf(
-        // Total with Lei - exact format
+        // Pattern 1: "TOTAL" followed by amount on same line
         Pattern.compile(
-            "(?:^|\\n)\\s*(?:TOTAL|Total|TOTAL\\s+DE\\s+PLATA)\\s*[:=]?\\s*(\\d{1,6}[.,]\\d{2})\\s*(?:RON|LEI|lei)?\\s*(?:\\n|$)",
+            "^\\s*TOTAL\\s*[:=]?\\s*(\\d{1,6}[.,]\\d{2})\\s*(?:RON|LEI|lei)?\\s*$",
             Pattern.MULTILINE or Pattern.CASE_INSENSITIVE
         ),
-        // Total at end of line with currency
+
+        // Pattern 2: "Total" followed by amount on same line
         Pattern.compile(
-            "(?:TOTAL|Total).*?(\\d{1,6}[.,]\\d{2})\\s*(?:RON|LEI|lei)\\s*$",
+            "^\\s*Total\\s*[:=]?\\s*(\\d{1,6}[.,]\\d{2})\\s*(?:RON|LEI|lei)?\\s*$",
             Pattern.MULTILINE or Pattern.CASE_INSENSITIVE
         ),
-        // Total with colon/equals
+
+        // Pattern 3: "TOTAL LEI" followed by amount
         Pattern.compile(
-            "(?:TOTAL|Total|SUMA)\\s*[:=]\\s*(\\d{1,6}[.,]\\d{2})",
-            Pattern.CASE_INSENSITIVE
+            "^\\s*TOTAL\\s+LEI\\s*[:=]?\\s*(\\d{1,6}[.,]\\d{2})\\s*$",
+            Pattern.MULTILINE or Pattern.CASE_INSENSITIVE
         ),
-        // De plata (to pay) pattern
+
+        // Pattern 4: "TOTAL DE PLATA" followed by amount
         Pattern.compile(
-            "(?:DE\\s+PLATA|PLATA)\\s*[:=]?\\s*(\\d{1,6}[.,]\\d{2})",
-            Pattern.CASE_INSENSITIVE
+            "^\\s*TOTAL\\s+DE\\s+PLATA\\s*[:=]?\\s*(\\d{1,6}[.,]\\d{2})\\s*(?:RON|LEI|lei)?\\s*$",
+            Pattern.MULTILINE or Pattern.CASE_INSENSITIVE
         ),
-        // Card payment amount
+
+        // Pattern 5: Amount after "TOTAL" with possible spaces/tabs
         Pattern.compile(
-            "(?:CARD|Plata\\s+cu\\s+cardul).*?(\\d{1,6}[.,]\\d{2})",
-            Pattern.CASE_INSENSITIVE
+            "^\\s*TOTAL[\\s\\t]*([\\d]{1,6}[.,]\\d{2})\\s*(?:RON|LEI|lei)?\\s*$",
+            Pattern.MULTILINE or Pattern.CASE_INSENSITIVE
         ),
-        // Last resort - any total pattern
+
+        // Pattern 6: "Total:" followed by amount
         Pattern.compile(
-            "(?:TOTAL|Total).*?(\\d{1,6}[.,]\\d{2})",
-            Pattern.CASE_INSENSITIVE
+            "^\\s*Total\\s*:\\s*(\\d{1,6}[.,]\\d{2})\\s*(?:RON|LEI|lei)?\\s*$",
+            Pattern.MULTILINE or Pattern.CASE_INSENSITIVE
         )
     )
 
@@ -344,55 +348,69 @@ class ReceiptScanner(private val context: Context) {
 
     private fun parseReceiptDataEnhanced(text: Text): ReceiptData {
         val extractedText = text.text
+        Log.d("ReceiptScanner", "=== STARTING RECEIPT ANALYSIS ===")
+        Log.d("ReceiptScanner", "Full OCR text:\n$extractedText")
+        Log.d("ReceiptScanner", "=== END OCR TEXT ===")
+
         var confidence = 0.0f
 
-        // Enhanced amount detection with multiple attempts
+        // Try Romanian-specific total detection first
         var amount = findRomanianTotalAmount(extractedText)
-        if (amount > 0) confidence += 0.4f
-
-        if (amount <= 0) {
-            amount = findTraditionalTotalAmount(extractedText)
-            if (amount > 0) confidence += 0.3f
+        if (amount > 0) {
+            confidence += 0.8f // High confidence for Romanian format
+            Log.d("ReceiptScanner", "Romanian total found: $amount, confidence: $confidence")
         }
 
+        // Fallback to position-based detection if needed
         if (amount <= 0) {
             amount = findAmountByPosition(text)
-            if (amount > 0) confidence += 0.25f
+            if (amount > 0) confidence += 0.4f
         }
 
-        if (amount <= 0) {
-            amount = findLargestReasonableAmount(extractedText)
-            if (amount > 0) confidence += 0.2f
-        }
+        // Try merchant detection
+        val merchantName = findRomanianMerchantName(extractedText)
+        if (merchantName.isNotEmpty()) confidence += 0.2f
 
-        // Enhanced merchant detection
-        val merchantName = findMerchantNameEnhanced(extractedText, text)
-        if (merchantName.isNotEmpty()) confidence += 0.3f
+        // Determine category based on merchant
+        val category = categorizeMerchant(merchantName)
 
-        // Enhanced category detection
-        val category = enhancedCategoryGuessing(extractedText, merchantName)
-        if (category != "Other") confidence += 0.2f
+        Log.d("ReceiptScanner", "Final results - Amount: $amount, Merchant: $merchantName, Category: $category, Confidence: $confidence")
 
-        Log.d("EnhancedReceiptScanner", "Final results - Amount: $amount, Merchant: $merchantName, Category: $category, Confidence: $confidence")
+        return ReceiptData(
+            success = amount > 0,
+            amount = amount,
+            merchantName = merchantName,
+            category = category,
+            rawText = extractedText,
+            confidence = confidence,
+            error = if (amount <= 0) "Could not detect total amount" else ""
+        )
+    }
 
-        return if (amount > 0) {
-            ReceiptData(
-                success = true,
-                amount = amount,
-                merchantName = merchantName,
-                category = category,
-                rawText = extractedText,
-                confidence = confidence
-            )
-        } else {
-            ReceiptData(
-                success = false,
-                error = "Could not find a valid amount on the receipt",
-                rawText = extractedText,
-                confidence = confidence
-            )
+    // Helper method to categorize based on merchant
+    private fun categorizeMerchant(merchantName: String): String {
+        val upperMerchant = merchantName.uppercase()
+        return when {
+            upperMerchant.contains("KAUFLAND") || upperMerchant.contains("CARREFOUR") ||
+                    upperMerchant.contains("AUCHAN") || upperMerchant.contains("MEGA") ||
+                    upperMerchant.contains("PROFI") || upperMerchant.contains("PENNY") ||
+                    upperMerchant.contains("LIDL") -> "Food"
+
+            upperMerchant.contains("PETROM") || upperMerchant.contains("ROMPETROL") ||
+                    upperMerchant.contains("OMV") -> "Transportation"
+
+            upperMerchant.contains("EMAG") || upperMerchant.contains("ALTEX") ||
+                    upperMerchant.contains("FLANCO") -> "Shopping"
+
+            upperMerchant.contains("CINEMA") || upperMerchant.contains("MALL") -> "Entertainment"
+
+            upperMerchant.contains("FARMACI") || upperMerchant.contains("CATENA") ||
+                    upperMerchant.contains("SENSIBLU") -> "Healthcare"
+
+            else -> "Other"
         }
     }
+
 
     private fun findAmountByPosition(text: Text): Double {
         // Look for amounts in the bottom third of the receipt
@@ -476,26 +494,136 @@ class ReceiptScanner(private val context: Context) {
         return ""
     }
 
+    // Enhanced parsing method for Romanian receipts
     private fun findRomanianTotalAmount(text: String): Double {
-        Log.d("EnhancedReceiptScanner", "Searching for Romanian TOTAL patterns...")
+        Log.d("ReceiptScanner", "Searching for Romanian total in text:\n$text")
 
-        for ((index, pattern) in romanianTotalPatterns.withIndex()) {
-            val matcher = pattern.matcher(text)
-            while (matcher.find()) {
-                try {
-                    val amountStr = matcher.group(1)?.trim() ?: continue
-                    val normalizedAmount = amountStr.replace(",", ".")
-                    val amount = normalizedAmount.toDouble()
+        // Split text into lines for line-by-line analysis
+        val lines = text.split('\n')
+        Log.d("ReceiptScanner", "Total lines to analyze: ${lines.size}")
 
-                    if (amount > 0 && amount < 100000) { // Increased upper limit
-                        Log.d("EnhancedReceiptScanner", "Found amount $amount using pattern ${index + 1}")
-                        Log.d("EnhancedReceiptScanner", "Matched text: '${matcher.group(0)}'")
-                        return amount
-                    }
-                } catch (e: NumberFormatException) {
-                    Log.d("EnhancedReceiptScanner", "Failed to parse amount: ${matcher.group(1)}")
-                    continue
+        // First pass: Look for lines that start with TOTAL variants
+        for (i in lines.indices) {
+            val line = lines[i].trim()
+            Log.d("ReceiptScanner", "Analyzing line $i: '$line'")
+
+            // Check if line starts with TOTAL (case insensitive)
+            if (line.uppercase().startsWith("TOTAL")) {
+                Log.d("ReceiptScanner", "Found TOTAL line: '$line'")
+
+                // Try to extract amount from this line
+                val amount = extractAmountFromTotalLine(line)
+                if (amount > 0) {
+                    Log.d("ReceiptScanner", "Successfully extracted amount: $amount from line: '$line'")
+                    return amount
                 }
+
+                // If no amount on same line, check next line
+                if (i + 1 < lines.size) {
+                    val nextLine = lines[i + 1].trim()
+                    Log.d("ReceiptScanner", "Checking next line: '$nextLine'")
+                    val nextLineAmount = extractAmountFromLine(nextLine)
+                    if (nextLineAmount > 0) {
+                        Log.d("ReceiptScanner", "Found amount on next line: $nextLineAmount")
+                        return nextLineAmount
+                    }
+                }
+            }
+        }
+
+        // Second pass: Use regex patterns as fallback
+        for (pattern in romanianTotalPatterns) {
+            val matcher = pattern.matcher(text)
+            if (matcher.find()) {
+                val amountStr = matcher.group(1)
+                if (amountStr != null) {
+                    try {
+                        val amount = amountStr.replace(',', '.').toDouble()
+                        Log.d("ReceiptScanner", "Found amount via regex: $amount from pattern: ${pattern.pattern()}")
+                        if (amount > 0) return amount
+                    } catch (e: NumberFormatException) {
+                        Log.w("ReceiptScanner", "Could not parse amount: $amountStr")
+                    }
+                }
+            }
+        }
+
+        Log.d("ReceiptScanner", "No Romanian total amount found")
+        return 0.0
+    }
+
+    // Enhanced merchant detection for Romanian stores
+    private fun findRomanianMerchantName(text: String): String {
+        val lines = text.split('\n')
+
+        // Look for Romanian chain stores first
+        val romanianChains = listOf(
+            "KAUFLAND", "CARREFOUR", "AUCHAN", "MEGA IMAGE", "PROFI",
+            "PENNY", "LIDL", "SELGROS", "METRO", "CORA", "REAL"
+        )
+
+        for (line in lines.take(10)) { // Check first 10 lines
+            val upperLine = line.trim().uppercase()
+            for (chain in romanianChains) {
+                if (upperLine.contains(chain)) {
+                    Log.d("ReceiptScanner", "Found Romanian chain: $chain")
+                    return chain
+                }
+            }
+        }
+
+        // Look for company types (SA, SRL)
+        for (line in lines.take(5)) { // Check first 5 lines for company names
+            val companyPattern = Pattern.compile(
+                "([A-Z][A-Za-z\\s&'.-]{3,25})\\s+(?:SA|SRL|S\\.R\\.L\\.)",
+                Pattern.CASE_INSENSITIVE
+            )
+            val matcher = companyPattern.matcher(line.trim())
+            if (matcher.find()) {
+                val companyName = matcher.group(1)?.trim()
+                if (companyName != null && companyName.length > 3) {
+                    Log.d("ReceiptScanner", "Found company: $companyName")
+                    return companyName
+                }
+            }
+        }
+
+        return ""
+    }
+
+    private fun extractAmountFromTotalLine(line: String): Double {
+        // Remove TOTAL prefix and common words
+        val cleanLine = line.uppercase()
+            .replace("TOTAL", "")
+            .replace("LEI", "")
+            .replace("RON", "")
+            .replace("DE", "")
+            .replace("PLATA", "")
+            .replace(":", "")
+            .replace("=", "")
+            .trim()
+
+        Log.d("ReceiptScanner", "Cleaned TOTAL line: '$cleanLine'")
+
+        return extractAmountFromLine(cleanLine)
+    }
+
+    // Extract numeric amount from any line
+    private fun extractAmountFromLine(line: String): Double {
+        // Pattern to match Romanian currency format: 123.45 or 123,45
+        val amountPattern = Pattern.compile("(\\d{1,6}[.,]\\d{2})")
+        val matcher = amountPattern.matcher(line)
+
+        if (matcher.find()) {
+            val amountStr = matcher.group(1)
+            return try {
+                val normalizedAmount = amountStr?.replace(',', '.')
+                val amount = normalizedAmount?.toDouble() ?: 0.0
+                Log.d("ReceiptScanner", "Extracted amount: $amount from line: '$line'")
+                amount
+            } catch (e: NumberFormatException) {
+                Log.w("ReceiptScanner", "Failed to parse amount: $amountStr from line: '$line'")
+                0.0
             }
         }
 
