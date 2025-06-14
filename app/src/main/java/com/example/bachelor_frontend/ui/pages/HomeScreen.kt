@@ -7,7 +7,10 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.CameraAlt
 import androidx.compose.material.icons.filled.Chat
+import androidx.compose.material.icons.filled.DocumentScanner
+import androidx.compose.material.icons.filled.Groups
 import androidx.compose.material.icons.filled.InsertChart
+import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.QrCode2
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -15,9 +18,11 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
+import com.example.bachelor_frontend.classes.BudgetType
 import com.example.bachelor_frontend.classes.ExpenseDto
 import com.example.bachelor_frontend.ui.compose.ExpenseItem
 import com.example.bachelor_frontend.ui.compose.SummaryCard
+import com.example.bachelor_frontend.viewmodel.FamilyViewModel
 import java.time.LocalDateTime
 import java.time.temporal.TemporalAdjusters
 
@@ -26,10 +31,12 @@ import java.time.temporal.TemporalAdjusters
 fun HomeScreen(
     expenses: List<ExpenseDto>,
     monthlyBudget: Double,
+    familyViewModel: FamilyViewModel,
     onAddExpenseClick: () -> Unit,
     onExpenseClick: (ExpenseDto) -> Unit,
     onScanReceiptClick: () -> Unit,
-    onChatExpenseClick: () -> Unit = {}
+    onChatExpenseClick: () -> Unit = {},
+    onDocumentScanClick: () -> Unit = {}
 ) {
     val currentMonth = remember { LocalDateTime.now().month }
     val currentYear = remember { LocalDateTime.now().year }
@@ -50,6 +57,17 @@ fun HomeScreen(
     val totalSpent = currentMonthExpenses.sumOf { it.amount }
     val remaining = (monthlyBudget - totalSpent).coerceAtLeast(0.0)
 
+    val userFamily by familyViewModel.family.collectAsState()
+
+    var selectedBudgetFilter by remember { mutableStateOf("All") }
+    val filteredExpenses = expenses.filter { expense ->
+        when(selectedBudgetFilter){
+            "Personal" -> expense.budgetType == BudgetType.PERSONAL
+            "Family" -> expense.budgetType == BudgetType.FAMILY
+            else -> true
+        }
+    }
+
     Scaffold(
         topBar = {
             TopAppBar(
@@ -57,11 +75,21 @@ fun HomeScreen(
                 colors = TopAppBarDefaults.topAppBarColors(
                     containerColor = MaterialTheme.colorScheme.primary,
                     titleContentColor = MaterialTheme.colorScheme.onPrimary
-                )
+                ),
+                actions = {
+                    IconButton(onClick = onChatExpenseClick) {
+                        Icon(
+                            Icons.Default.Chat,
+                            contentDescription = "Chat Assistant",
+                            tint = MaterialTheme.colorScheme.onPrimary
+                        )
+                    }
+                }
             )
         },
         floatingActionButton = {
             Column {
+
                 SmallFloatingActionButton(
                     onClick = {onChatExpenseClick()},
                     containerColor = MaterialTheme.colorScheme.secondary,
@@ -70,7 +98,6 @@ fun HomeScreen(
                 ) {
                     Icon(Icons.Default.Chat, contentDescription = "Chat Expense")
                 }
-                // Receipt Scanner Button
                 SmallFloatingActionButton(
                     onClick = { onScanReceiptClick() },
                     containerColor = MaterialTheme.colorScheme.tertiary,
@@ -80,7 +107,6 @@ fun HomeScreen(
                     Icon(Icons.Default.CameraAlt, contentDescription = "Scan Receipt")
                 }
 
-                // Add Expense Button
                 FloatingActionButton(
                     onClick = { onAddExpenseClick() },
                     containerColor = MaterialTheme.colorScheme.primary,
@@ -119,6 +145,48 @@ fun HomeScreen(
                     color = if (remaining > monthlyBudget * 0.2) MaterialTheme.colorScheme.primary else Color(0xFFF44336)
                 )
 
+                if (userFamily != null) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 8.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        FilterChip(
+                            selected = selectedBudgetFilter == "All",
+                            onClick = { selectedBudgetFilter = "All" },
+                            label = { Text("All Expenses") },
+                            modifier = Modifier.weight(1f)
+                        )
+
+                        FilterChip(
+                            selected = selectedBudgetFilter == "Personal",
+                            onClick = { selectedBudgetFilter = "Personal" },
+                            label = {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Icon(Icons.Default.Person, contentDescription = null, modifier = Modifier.size(16.dp))
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Text("Personal")
+                                }
+                            },
+                            modifier = Modifier.weight(1f)
+                        )
+
+                        FilterChip(
+                            selected = selectedBudgetFilter == "Family",
+                            onClick = { selectedBudgetFilter = "Family" },
+                            label = {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Icon(Icons.Default.Groups, contentDescription = null, modifier = Modifier.size(16.dp))
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Text("Family")
+                                }
+                            },
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
+                }
+
                 Spacer(modifier = Modifier.height(8.dp))
 
                 Text(
@@ -128,7 +196,7 @@ fun HomeScreen(
                 )
             }
 
-            if (currentMonthExpenses.isEmpty()) {
+            if (filteredExpenses.isEmpty()) {
                 item {
                     Card(
                         modifier = Modifier
@@ -169,7 +237,7 @@ fun HomeScreen(
                     }
                 }
             } else {
-                items(currentMonthExpenses.sortedByDescending { it.timestamp }) { expense ->
+                items(filteredExpenses.sortedByDescending { it.timestamp }) { expense ->
                     ExpenseItem(
                         expense = expense,
                         onClick = onExpenseClick
@@ -177,7 +245,7 @@ fun HomeScreen(
                 }
 
                 item {
-                    Spacer(modifier = Modifier.height(80.dp)) // Space for FAB
+                    Spacer(modifier = Modifier.height(80.dp))
                 }
             }
         }

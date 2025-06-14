@@ -1,8 +1,17 @@
 package com.example.bachelor_frontend.ui.function
 
 import android.content.Context
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import android.graphics.Canvas
+import android.graphics.Color
+import android.graphics.ColorMatrix
+import android.graphics.ColorMatrixColorFilter
+import android.graphics.Matrix
+import android.graphics.Paint
 import android.net.Uri
 import android.util.Log
+import androidx.exifinterface.media.ExifInterface
 import com.example.bachelor_frontend.classes.ExpenseDto
 import com.google.mlkit.vision.common.InputImage
 import com.google.mlkit.vision.text.Text
@@ -18,104 +27,309 @@ import java.util.UUID
 import java.util.regex.Pattern
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
+import kotlin.math.min
+import kotlin.math.max
 
 class ReceiptScanner(private val context: Context) {
     private val textRecognizer: TextRecognizer = TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
 
-    // Romanian-specific patterns for merchant names ending in SA, SRL, S.R.L.
+    // Enhanced merchant patterns with Romanian specifics
     private val romanianMerchantPatterns = listOf(
-        // Pattern 1: Company name ending with SA (most common)
+        // Company types with better boundaries
         Pattern.compile(
-            "^\\s*([A-Z][A-Za-z\\s&'.-]{2,40})\\s+SA\\s*$",
+            "(?:^|\\n)\\s*([A-Z][A-Za-z\\s&'.-]{3,35})\\s+(?:SA|SRL|S\\.R\\.L\\.)\\s*(?:\\n|$)",
             Pattern.MULTILINE or Pattern.CASE_INSENSITIVE
         ),
-
-        // Pattern 2: Company name ending with SRL
+        // Chain stores
         Pattern.compile(
-            "^\\s*([A-Z][A-Za-z\\s&'.-]{2,40})\\s+SRL\\s*$",
+            "(?:^|\\n)\\s*(KAUFLAND|CARREFOUR|AUCHAN|MEGA\\s*IMAGE|PROFI|PENNY|LIDL|SELGROS|METRO|CORA|REAL)\\s*(?:\\n|$)",
             Pattern.MULTILINE or Pattern.CASE_INSENSITIVE
         ),
-
-        // Pattern 3: Company name ending with S.R.L. (with dots)
+        // Fast food chains
         Pattern.compile(
-            "^\\s*([A-Z][A-Za-z\\s&'.-]{2,40})\\s+S\\.R\\.L\\.\\s*$",
+            "(?:^|\\n)\\s*(MC\\s*DONALD|KFC|BURGER\\s*KING|SUBWAY|PIZZA\\s*HUT|DOMINO|TACO\\s*BELL)\\s*(?:\\n|$)",
             Pattern.MULTILINE or Pattern.CASE_INSENSITIVE
         ),
-
-        // Pattern 4: Full line with SA/SRL at the end
+        // General merchant pattern with better context
         Pattern.compile(
-            "^\\s*([A-Z][A-Za-z\\s&'.-]{2,40}\\s+(?:SA|SRL|S\\.R\\.L\\.))\\s*$",
-            Pattern.MULTILINE or Pattern.CASE_INSENSITIVE
-        ),
-
-        // Pattern 5: Store name at top (first few lines)
-        Pattern.compile(
-            "^\\s*([A-Z][A-Z\\s&'.-]{3,30})\\s*$",
+            "(?:^|\\n)\\s*([A-Z][A-Z\\s&'.-]{4,25})\\s*(?:\\n|$)",
             Pattern.MULTILINE
         )
     )
 
-    // Romanian-specific TOTAL patterns - prioritizing "TOTAL Lei" format
+    // Enhanced total patterns with more variations
     private val romanianTotalPatterns = listOf(
-        // Pattern 1: TOTAL Lei with amount at end of line (HIGHEST PRIORITY)
+        // Total with Lei - exact format
         Pattern.compile(
-            "(?:^|\\n)\\s*(?:TOTAL|Total)\\s+Lei.*?(\\d{1,5}[.,]\\d{2})\\s*$",
+            "(?:^|\\n)\\s*(?:TOTAL|Total|TOTAL\\s+DE\\s+PLATA)\\s*[:=]?\\s*(\\d{1,6}[.,]\\d{2})\\s*(?:RON|LEI|lei)?\\s*(?:\\n|$)",
             Pattern.MULTILINE or Pattern.CASE_INSENSITIVE
         ),
-
-        // Pattern 2: TOTAL Lei with amount anywhere on line
+        // Total at end of line with currency
         Pattern.compile(
-            "(?:TOTAL|Total)\\s+Lei[^\\n]*?(\\d{1,5}[.,]\\d{2})",
-            Pattern.CASE_INSENSITIVE
-        ),
-
-        // Pattern 3: TOTAL with Lei and amount
-        Pattern.compile(
-            "(?:TOTAL|Total)[^\\n]*?(\\d{1,5}[.,]\\d{2})[^\\n]*Lei",
-            Pattern.CASE_INSENSITIVE
-        ),
-
-        // Pattern 4: Traditional TOTAL line with amount at end
-        Pattern.compile(
-            "(?:^|\\n)\\s*(?:TOTAL|Total)[^\\n]*?(\\d{1,5}[.,]\\d{2})\\s*$",
+            "(?:TOTAL|Total).*?(\\d{1,6}[.,]\\d{2})\\s*(?:RON|LEI|lei)\\s*$",
             Pattern.MULTILINE or Pattern.CASE_INSENSITIVE
         ),
-
-        // Pattern 5: TOTAL with colon and amount
+        // Total with colon/equals
         Pattern.compile(
-            "(?:TOTAL|Total)\\s*:.*?(\\d{1,5}[.,]\\d{2})",
+            "(?:TOTAL|Total|SUMA)\\s*[:=]\\s*(\\d{1,6}[.,]\\d{2})",
             Pattern.CASE_INSENSITIVE
         ),
-
-        // Pattern 6: Simple TOTAL anywhere with amount
+        // De plata (to pay) pattern
         Pattern.compile(
-            "(?:TOTAL|Total).*?(\\d{1,5}[.,]\\d{2})",
+            "(?:DE\\s+PLATA|PLATA)\\s*[:=]?\\s*(\\d{1,6}[.,]\\d{2})",
+            Pattern.CASE_INSENSITIVE
+        ),
+        // Card payment amount
+        Pattern.compile(
+            "(?:CARD|Plata\\s+cu\\s+cardul).*?(\\d{1,6}[.,]\\d{2})",
+            Pattern.CASE_INSENSITIVE
+        ),
+        // Last resort - any total pattern
+        Pattern.compile(
+            "(?:TOTAL|Total).*?(\\d{1,6}[.,]\\d{2})",
             Pattern.CASE_INSENSITIVE
         )
+    )
+
+    data class ReceiptData(
+        val success: Boolean,
+        val amount: Double = 0.0,
+        val merchantName: String = "",
+        val category: String = "Other",
+        val rawText: String = "",
+        val error: String = "",
+        val confidence: Float = 0.0f,
+        val processedImageUri: String? = null
     )
 
     suspend fun processReceiptImage(imageUri: Uri): ReceiptData {
         return withContext(Dispatchers.IO) {
             try {
-                val image = InputImage.fromFilePath(context, imageUri)
+                Log.d("EnhancedReceiptScanner", "Starting receipt processing...")
+
+                // Step 1: Load and preprocess the image
+                val preprocessedBitmap = loadAndPreprocessImage(imageUri)
+                if (preprocessedBitmap == null) {
+                    return@withContext ReceiptData(
+                        success = false,
+                        error = "Failed to load image"
+                    )
+                }
+
+                // Step 2: Create InputImage from preprocessed bitmap
+                val image = InputImage.fromBitmap(preprocessedBitmap, 0)
+
+                // Step 3: Process with MLKit
                 val recognizedText = processImage(image)
 
-                Log.d("ReceiptScanner", "Raw text from receipt:\n${recognizedText.text}")
-                parseReceiptData(recognizedText)
+                Log.d("EnhancedReceiptScanner", "Raw OCR text:\n${recognizedText.text}")
+
+                // Step 4: Parse the receipt data with enhanced logic
+                val result = parseReceiptDataEnhanced(recognizedText)
+
+                // Clean up
+                if (!preprocessedBitmap.isRecycled) {
+                    preprocessedBitmap.recycle()
+                }
+
+                result
             } catch (e: IOException) {
-                Log.e("ReceiptScanner", "Error processing image", e)
+                Log.e("EnhancedReceiptScanner", "Error processing image", e)
                 ReceiptData(
                     success = false,
                     error = "Failed to process image: ${e.message}"
                 )
             } catch (e: Exception) {
-                Log.e("ReceiptScanner", "Error in receipt scanning", e)
+                Log.e("EnhancedReceiptScanner", "Error in receipt scanning", e)
                 ReceiptData(
                     success = false,
                     error = "Error analyzing receipt: ${e.message}"
                 )
             }
         }
+    }
+
+    private fun loadAndPreprocessImage(imageUri: Uri): Bitmap? {
+        return try {
+            Log.d("EnhancedReceiptScanner", "Loading image from URI: $imageUri")
+
+            // Load original bitmap
+            val inputStream = context.contentResolver.openInputStream(imageUri)
+            val originalBitmap = BitmapFactory.decodeStream(inputStream)
+            inputStream?.close()
+
+            if (originalBitmap == null) {
+                Log.e("EnhancedReceiptScanner", "Failed to decode bitmap from URI")
+                return null
+            }
+
+            Log.d("EnhancedReceiptScanner", "Original image size: ${originalBitmap.width}x${originalBitmap.height}")
+
+            // Apply preprocessing pipeline
+            var processedBitmap = originalBitmap
+
+            // 1. Fix orientation
+            processedBitmap = fixOrientation(processedBitmap, imageUri)
+
+            // 2. Resize if too large (max 2048px on longest side)
+            processedBitmap = resizeIfNeeded(processedBitmap, 2048)
+
+            // 3. Enhance contrast and brightness
+            processedBitmap = enhanceContrast(processedBitmap)
+
+            // 4. Apply noise reduction
+            processedBitmap = reduceNoise(processedBitmap)
+
+            // 5. Convert to grayscale for better OCR
+            processedBitmap = convertToGrayscale(processedBitmap)
+
+            Log.d("EnhancedReceiptScanner", "Processed image size: ${processedBitmap.width}x${processedBitmap.height}")
+
+            // Clean up original if different
+            if (processedBitmap != originalBitmap && !originalBitmap.isRecycled) {
+                originalBitmap.recycle()
+            }
+
+            processedBitmap
+        } catch (e: Exception) {
+            Log.e("EnhancedReceiptScanner", "Error preprocessing image", e)
+            null
+        }
+    }
+
+    private fun fixOrientation(bitmap: Bitmap, imageUri: Uri): Bitmap {
+        return try {
+            val inputStream = context.contentResolver.openInputStream(imageUri)
+            val exif = ExifInterface(inputStream!!)
+            inputStream.close()
+
+            val orientation = exif.getAttributeInt(
+                ExifInterface.TAG_ORIENTATION,
+                ExifInterface.ORIENTATION_NORMAL
+            )
+
+            val matrix = Matrix()
+            when (orientation) {
+                ExifInterface.ORIENTATION_ROTATE_90 -> matrix.postRotate(90f)
+                ExifInterface.ORIENTATION_ROTATE_180 -> matrix.postRotate(180f)
+                ExifInterface.ORIENTATION_ROTATE_270 -> matrix.postRotate(270f)
+                else -> return bitmap
+            }
+
+            val rotatedBitmap = Bitmap.createBitmap(bitmap, 0, 0, bitmap.width, bitmap.height, matrix, true)
+            if (rotatedBitmap != bitmap && !bitmap.isRecycled) {
+                bitmap.recycle()
+            }
+            rotatedBitmap
+        } catch (e: Exception) {
+            Log.w("EnhancedReceiptScanner", "Could not fix orientation", e)
+            bitmap
+        }
+    }
+
+    private fun resizeIfNeeded(bitmap: Bitmap, maxSize: Int): Bitmap {
+        val width = bitmap.width
+        val height = bitmap.height
+
+        if (width <= maxSize && height <= maxSize) {
+            return bitmap
+        }
+
+        val ratio = min(maxSize.toFloat() / width, maxSize.toFloat() / height)
+        val newWidth = (width * ratio).toInt()
+        val newHeight = (height * ratio).toInt()
+
+        val resizedBitmap = Bitmap.createScaledBitmap(bitmap, newWidth, newHeight, true)
+        if (resizedBitmap != bitmap && !bitmap.isRecycled) {
+            bitmap.recycle()
+        }
+        return resizedBitmap
+    }
+
+    private fun enhanceContrast(bitmap: Bitmap): Bitmap? {
+        val enhancedBitmap =
+            bitmap.config?.let { Bitmap.createBitmap(bitmap.width, bitmap.height, it) }
+        val canvas = enhancedBitmap?.let { Canvas(it) }
+        val paint = Paint()
+
+        // Increase contrast and brightness
+        val colorMatrix = ColorMatrix(floatArrayOf(
+            1.5f, 0f, 0f, 0f, 15f,  // Red
+            0f, 1.5f, 0f, 0f, 15f,  // Green
+            0f, 0f, 1.5f, 0f, 15f,  // Blue
+            0f, 0f, 0f, 1f, 0f      // Alpha
+        ))
+
+        paint.colorFilter = ColorMatrixColorFilter(colorMatrix)
+        if (canvas != null) {
+            canvas.drawBitmap(bitmap, 0f, 0f, paint)
+        }
+
+        if (!bitmap.isRecycled) {
+            bitmap.recycle()
+        }
+        return enhancedBitmap
+    }
+
+    private fun reduceNoise(bitmap: Bitmap): Bitmap? {
+        // Simple noise reduction by slight blur
+        val width = bitmap.width
+        val height = bitmap.height
+        val pixels = IntArray(width * height)
+        bitmap.getPixels(pixels, 0, width, 0, 0, width, height)
+
+        // Apply a simple 3x3 blur kernel
+        val result = IntArray(width * height)
+
+        for (y in 1 until height - 1) {
+            for (x in 1 until width - 1) {
+                var r = 0
+                var g = 0
+                var b = 0
+
+                for (dy in -1..1) {
+                    for (dx in -1..1) {
+                        val pixel = pixels[(y + dy) * width + (x + dx)]
+                        r += Color.red(pixel)
+                        g += Color.green(pixel)
+                        b += Color.blue(pixel)
+                    }
+                }
+
+                r /= 9
+                g /= 9
+                b /= 9
+
+                result[y * width + x] = Color.rgb(r, g, b)
+            }
+        }
+
+        val denoisedBitmap = bitmap.config?.let { Bitmap.createBitmap(width, height, it) }
+        if (denoisedBitmap != null) {
+            denoisedBitmap.setPixels(result, 0, width, 0, 0, width, height)
+        }
+
+        if (!bitmap.isRecycled) {
+            bitmap.recycle()
+        }
+        return denoisedBitmap
+    }
+
+    private fun convertToGrayscale(bitmap: Bitmap): Bitmap {
+        val grayscaleBitmap = Bitmap.createBitmap(bitmap.width, bitmap.height, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(grayscaleBitmap)
+        val paint = Paint()
+
+        val colorMatrix = ColorMatrix()
+        colorMatrix.setSaturation(0f)
+        paint.colorFilter = ColorMatrixColorFilter(colorMatrix)
+
+        canvas.drawBitmap(bitmap, 0f, 0f, paint)
+
+        if (!bitmap.isRecycled) {
+            bitmap.recycle()
+        }
+        return grayscaleBitmap
     }
 
     private suspend fun processImage(image: InputImage): Text = suspendCancellableCoroutine { continuation ->
@@ -128,28 +342,38 @@ class ReceiptScanner(private val context: Context) {
             }
     }
 
-    private fun parseReceiptData(text: Text): ReceiptData {
+    private fun parseReceiptDataEnhanced(text: Text): ReceiptData {
         val extractedText = text.text
+        var confidence = 0.0f
 
-        // PRIORITY 1: Try Romanian TOTAL Lei patterns first
+        // Enhanced amount detection with multiple attempts
         var amount = findRomanianTotalAmount(extractedText)
+        if (amount > 0) confidence += 0.4f
 
-        // PRIORITY 2: If no TOTAL Lei found, try traditional TOTAL patterns
         if (amount <= 0) {
             amount = findTraditionalTotalAmount(extractedText)
+            if (amount > 0) confidence += 0.3f
         }
 
-        // PRIORITY 3: Last resort - find largest reasonable amount (with better filtering)
+        if (amount <= 0) {
+            amount = findAmountByPosition(text)
+            if (amount > 0) confidence += 0.25f
+        }
+
         if (amount <= 0) {
             amount = findLargestReasonableAmount(extractedText)
+            if (amount > 0) confidence += 0.2f
         }
 
-        val merchantName = findRomanianMerchantName(extractedText)
-        val category = enhancedCategoryGuessing(extractedText, merchantName)
+        // Enhanced merchant detection
+        val merchantName = findMerchantNameEnhanced(extractedText, text)
+        if (merchantName.isNotEmpty()) confidence += 0.3f
 
-        Log.d("ReceiptScanner", "Extracted amount: $amount")
-        Log.d("ReceiptScanner", "Extracted merchant: $merchantName")
-        Log.d("ReceiptScanner", "Guessed category: $category")
+        // Enhanced category detection
+        val category = enhancedCategoryGuessing(extractedText, merchantName)
+        if (category != "Other") confidence += 0.2f
+
+        Log.d("EnhancedReceiptScanner", "Final results - Amount: $amount, Merchant: $merchantName, Category: $category, Confidence: $confidence")
 
         return if (amount > 0) {
             ReceiptData(
@@ -157,24 +381,103 @@ class ReceiptScanner(private val context: Context) {
                 amount = amount,
                 merchantName = merchantName,
                 category = category,
-                rawText = extractedText
+                rawText = extractedText,
+                confidence = confidence
             )
         } else {
-            Log.d("ReceiptScanner", "Could not find amount. Text blocks: ${text.textBlocks.size}")
-            for (block in text.textBlocks) {
-                Log.d("ReceiptScanner", "Block: ${block.text}")
-            }
-
             ReceiptData(
                 success = false,
                 error = "Could not find a valid amount on the receipt",
-                rawText = extractedText
+                rawText = extractedText,
+                confidence = confidence
             )
         }
     }
 
+    private fun findAmountByPosition(text: Text): Double {
+        // Look for amounts in the bottom third of the receipt
+        val textBlocks = text.textBlocks
+        if (textBlocks.isEmpty()) return 0.0
+
+        val maxY = textBlocks.maxOfOrNull { it.boundingBox?.bottom ?: 0 } ?: 0
+        val bottomThird = maxY * 2 / 3
+
+        val amountPattern = Pattern.compile("(\\d{1,6}[.,]\\d{2})")
+
+        for (block in textBlocks) {
+            val blockY = block.boundingBox?.top ?: 0
+            if (blockY >= bottomThird) {
+                val matcher = amountPattern.matcher(block.text)
+                while (matcher.find()) {
+                    try {
+                        val amountStr = matcher.group(1)?.replace(",", ".") ?: continue
+                        val amount = amountStr.toDouble()
+                        if (amount >= 1.0 && amount <= 10000.0) {
+                            Log.d("EnhancedReceiptScanner", "Found amount by position: $amount in bottom section")
+                            return amount
+                        }
+                    } catch (e: NumberFormatException) {
+                        continue
+                    }
+                }
+            }
+        }
+        return 0.0
+    }
+
+    private fun findMerchantNameEnhanced(text: String, textStructure: Text): String {
+        // First try structured detection from top of receipt
+        val topLines = text.split("\n").take(5)
+
+        for (line in topLines) {
+            val cleanLine = line.trim()
+            if (cleanLine.length > 3 &&
+                !cleanLine.contains(Regex("\\d{2}[.,]\\d{2}")) &&
+                !cleanLine.matches(Regex("^\\d+.*")) &&
+                !cleanLine.contains(Regex("(?i)(bon|fiscal|nr|data|ora|receipt)"))) {
+
+                // Check against known patterns
+                for (pattern in romanianMerchantPatterns) {
+                    val matcher = pattern.matcher(cleanLine)
+                    if (matcher.find()) {
+                        val merchant = matcher.group(1)?.trim() ?: continue
+                        if (merchant.length > 2) {
+                            return cleanMerchantName(merchant)
+                        }
+                    }
+                }
+
+                // If no pattern match but looks like a merchant name
+                if (cleanLine.length in 4..35 && cleanLine.any { it.isLetter() }) {
+                    return cleanMerchantName(cleanLine)
+                }
+            }
+        }
+
+        // Try to find merchant using text block positions (top of receipt)
+        val textBlocks = textStructure.textBlocks
+        if (textBlocks.isNotEmpty()) {
+            val minY = textBlocks.minOfOrNull { it.boundingBox?.top ?: Int.MAX_VALUE } ?: 0
+            val topSection = minY + 200 // Top 200 pixels
+
+            for (block in textBlocks) {
+                val blockY = block.boundingBox?.top ?: Int.MAX_VALUE
+                if (blockY <= topSection) {
+                    val cleanText = block.text.trim()
+                    if (cleanText.length in 4..35 &&
+                        cleanText.any { it.isLetter() } &&
+                        !cleanText.contains(Regex("\\d{2}[.,]\\d{2}"))) {
+                        return cleanMerchantName(cleanText)
+                    }
+                }
+            }
+        }
+
+        return ""
+    }
+
     private fun findRomanianTotalAmount(text: String): Double {
-        Log.d("ReceiptScanner", "Searching for Romanian TOTAL Lei patterns...")
+        Log.d("EnhancedReceiptScanner", "Searching for Romanian TOTAL patterns...")
 
         for ((index, pattern) in romanianTotalPatterns.withIndex()) {
             val matcher = pattern.matcher(text)
@@ -184,13 +487,13 @@ class ReceiptScanner(private val context: Context) {
                     val normalizedAmount = amountStr.replace(",", ".")
                     val amount = normalizedAmount.toDouble()
 
-                    if (amount > 0 && amount < 50000) { // Reasonable bounds for Romanian receipts
-                        Log.d("ReceiptScanner", "Found TOTAL Lei amount $amount using pattern ${index + 1}")
-                        Log.d("ReceiptScanner", "Matched text: ${matcher.group(0)}")
+                    if (amount > 0 && amount < 100000) { // Increased upper limit
+                        Log.d("EnhancedReceiptScanner", "Found amount $amount using pattern ${index + 1}")
+                        Log.d("EnhancedReceiptScanner", "Matched text: '${matcher.group(0)}'")
                         return amount
                     }
                 } catch (e: NumberFormatException) {
-                    Log.d("ReceiptScanner", "Failed to parse Romanian amount: ${matcher.group(1)}")
+                    Log.d("EnhancedReceiptScanner", "Failed to parse amount: ${matcher.group(1)}")
                     continue
                 }
             }
@@ -200,65 +503,35 @@ class ReceiptScanner(private val context: Context) {
     }
 
     private fun findTraditionalTotalAmount(text: String): Double {
-        Log.d("ReceiptScanner", "Searching for traditional TOTAL patterns...")
+        Log.d("EnhancedReceiptScanner", "Searching for traditional TOTAL patterns...")
 
         val lines = text.split("\n")
         for (i in lines.indices) {
             val line = lines[i].trim()
 
-            // Look for lines starting with TOTAL or Total
-            if (line.matches(Regex("(?i)^\\s*total.*"))) {
-                Log.d("ReceiptScanner", "Found TOTAL line: $line")
+            // Look for lines containing "total" (case insensitive)
+            if (line.contains("total", ignoreCase = true) ||
+                line.contains("suma", ignoreCase = true) ||
+                line.contains("plata", ignoreCase = true)) {
 
-                // Try to find amount at the END of this line first
-                val endAmountPattern = Pattern.compile("(\\d{1,5}[.,]\\d{2})\\s*$")
-                val endMatcher = endAmountPattern.matcher(line)
-                if (endMatcher.find()) {
-                    try {
-                        val amountStr = endMatcher.group(1).trim()
-                        val normalizedAmount = amountStr.replace(",", ".")
-                        val amount = normalizedAmount.toDouble()
-                        if (amount > 0) {
-                            Log.d("ReceiptScanner", "Found amount at end of TOTAL line: $amount")
-                            return amount
-                        }
-                    } catch (e: NumberFormatException) {
-                        // Continue searching
-                    }
-                }
+                Log.d("EnhancedReceiptScanner", "Found total line: '$line'")
 
-                // If no amount at end, look for any amount on the line
-                val anyAmountPattern = Pattern.compile("(\\d{1,5}[.,]\\d{2})")
-                val anyMatcher = anyAmountPattern.matcher(line)
-                if (anyMatcher.find()) {
-                    try {
-                        val amountStr = anyMatcher.group(1).trim()
-                        val normalizedAmount = amountStr.replace(",", ".")
-                        val amount = normalizedAmount.toDouble()
-                        if (amount > 0) {
-                            Log.d("ReceiptScanner", "Found amount on TOTAL line: $amount")
-                            return amount
-                        }
-                    } catch (e: NumberFormatException) {
-                        // Continue to next line
-                    }
-                }
+                // Look for amounts in this line and next few lines
+                for (j in i..min(i + 2, lines.size - 1)) {
+                    val searchLine = lines[j]
+                    val amountPattern = Pattern.compile("(\\d{1,6}[.,]\\d{2})")
+                    val matcher = amountPattern.matcher(searchLine)
 
-                // Check the next line if no amount found on current TOTAL line
-                if (i + 1 < lines.size) {
-                    val nextLine = lines[i + 1].trim()
-                    val nextLineMatcher = anyAmountPattern.matcher(nextLine)
-                    if (nextLineMatcher.find()) {
+                    while (matcher.find()) {
                         try {
-                            val amountStr = nextLineMatcher.group(1).trim()
-                            val normalizedAmount = amountStr.replace(",", ".")
-                            val amount = normalizedAmount.toDouble()
-                            if (amount > 0) {
-                                Log.d("ReceiptScanner", "Found amount on line after TOTAL: $amount")
+                            val amountStr = matcher.group(1)?.replace(",", ".") ?: continue
+                            val amount = amountStr.toDouble()
+                            if (amount >= 1.0 && amount <= 50000.0) {
+                                Log.d("EnhancedReceiptScanner", "Found amount $amount near total line")
                                 return amount
                             }
                         } catch (e: NumberFormatException) {
-                            // Continue searching
+                            continue
                         }
                     }
                 }
@@ -269,162 +542,136 @@ class ReceiptScanner(private val context: Context) {
     }
 
     private fun findLargestReasonableAmount(text: String): Double {
-        Log.d("ReceiptScanner", "Searching for largest reasonable amount as fallback...")
+        Log.d("EnhancedReceiptScanner", "Searching for largest reasonable amount...")
 
         val amounts = mutableListOf<Double>()
-        val amountPattern = Pattern.compile("\\b(\\d{1,5}[.,]\\d{2})\\b")
+        val amountPattern = Pattern.compile("\\b(\\d{1,6}[.,]\\d{2})\\b")
         val matcher = amountPattern.matcher(text)
 
         while (matcher.find()) {
             try {
-                val amountStr = matcher.group(1)?.trim() ?: continue
-                val normalizedAmount = amountStr.replace(",", ".")
-                val amount = normalizedAmount.toDouble()
+                val amountStr = matcher.group(1)?.replace(",", ".") ?: continue
+                val amount = amountStr.toDouble()
 
-                // More restrictive bounds for fallback - avoid obviously wrong amounts
-                if (amount >= 1.00 && amount <= 5000.0) {
+                if (amount >= 1.00 && amount <= 50000.0) {
                     amounts.add(amount)
-                    Log.d("ReceiptScanner", "Found potential amount: $amount")
+                    Log.d("EnhancedReceiptScanner", "Found potential amount: $amount")
                 }
             } catch (e: NumberFormatException) {
-                // Skip invalid numbers
+                continue
             }
         }
 
-        // Return largest amount, but prefer amounts that are not too extreme
-        val sortedAmounts = amounts.sortedDescending()
-
-        // If we have multiple amounts, prefer one that's not the absolute largest
-        // (sometimes VAT or other large numbers appear)
         return when {
-            sortedAmounts.size >= 3 -> {
-                // If largest is more than 3x the second largest, prefer second largest
-                val largest = sortedAmounts[0]
-                val secondLargest = sortedAmounts[1]
-                if (largest > secondLargest * 3) {
-                    Log.d("ReceiptScanner", "Largest amount seems too big, using second largest: $secondLargest")
-                    secondLargest
-                } else {
+            amounts.isEmpty() -> 0.0
+            amounts.size == 1 -> amounts[0]
+            else -> {
+                val sorted = amounts.sortedDescending()
+                // If the largest amount is much larger than others, it might be a total
+                val largest = sorted[0]
+                val secondLargest = sorted.getOrNull(1) ?: 0.0
+
+                if (largest > secondLargest * 2 && largest > 10.0) {
                     largest
-                }
-            }
-            sortedAmounts.isNotEmpty() -> sortedAmounts[0]
-            else -> 0.0
-        }
-    }
-
-    private fun findRomanianMerchantName(text: String): String {
-        Log.d("ReceiptScanner", "Searching for Romanian merchant name (SA/SRL)...")
-
-        // Try Romanian-specific patterns first
-        for ((index, pattern) in romanianMerchantPatterns.withIndex()) {
-            val matcher = pattern.matcher(text)
-            if (matcher.find()) {
-                val merchant = matcher.group(1)?.trim() ?: continue
-                if (merchant.length > 2) {
-                    val cleanedMerchant = cleanMerchantName(merchant)
-                    Log.d("ReceiptScanner", "Found Romanian merchant using pattern ${index + 1}: $cleanedMerchant")
-                    return cleanedMerchant
+                } else {
+                    // Return the amount that appears most frequently
+                    amounts.groupingBy { it }.eachCount().maxByOrNull { it.value }?.key ?: largest
                 }
             }
         }
-
-        // Fallback: look in first 3 lines for company name
-        val lines = text.split("\n").map { it.trim() }.filter { it.isNotEmpty() }
-
-        for ((index, line) in lines.take(3).withIndex()) {
-            if (line.length > 3 &&
-                !line.contains(Regex("\\d{2}[.,]\\d{2}")) && // No prices
-                !line.matches(Regex("^\\d+.*")) && // Not starting with numbers
-                !line.contains(Regex("(?i)(receipt|bon|fiscal|nr|data|ora)")) // Not receipt metadata
-            ) {
-                val cleanedLine = cleanMerchantName(line)
-                if (cleanedLine.length > 3) {
-                    Log.d("ReceiptScanner", "Found merchant in line ${index + 1}: $cleanedLine")
-                    return cleanedLine
-                }
-            }
-        }
-
-        return ""
     }
 
     private fun cleanMerchantName(name: String): String {
         return name
-            .replace(Regex("[^A-Za-z\\s&'.-]"), "") // Remove special chars except business ones
-            .replace(Regex("\\s+"), " ") // Normalize spaces
+            .replace(Regex("[^A-Za-z\\s&'.-]"), "")
+            .replace(Regex("\\s+"), " ")
             .trim()
-            .take(50) // Reasonable length limit
+            .take(40)
     }
 
     private fun enhancedCategoryGuessing(text: String, merchantName: String): String {
         val lowerText = text.lowercase()
         val lowerMerchant = merchantName.lowercase()
+        val combinedText = "$lowerText $lowerMerchant"
 
-        // Romanian-aware category patterns
         val categoryPatterns = mapOf(
             "Food" to listOf(
                 // Romanian stores
                 "kaufland", "carrefour", "auchan", "mega image", "profi", "penny", "lidl",
                 "selgros", "metro", "cora", "real", "hypermarket", "supermarket",
-                // Food keywords
-                "grocery", "alimentara", "restaurant", "cafe", "cofetarie", "brutarie",
+                "alimentara", "piata", "magazin alimentar",
+                // Restaurants and fast food
+                "restaurant", "cafe", "cafea", "cofetarie", "brutarie", "patiserie",
                 "pizza", "burger", "kfc", "mcdonald", "subway", "doner", "shaorma",
-                "food", "mancare", "bautura", "lapte", "paine", "carne", "legume"
+                "food", "mancare", "bautura", "lapte", "paine", "carne", "legume",
+                // Food items that might appear on receipt
+                "milk", "bread", "meat", "vegetables", "fruit", "cheese"
             ),
             "Transportation" to listOf(
-                "petrom", "rompetrol", "omv", "mol", "lukoil", "shell", "bp",
-                "benzina", "motorina", "combustibil", "parcare", "parking",
-                "uber", "bolt", "taxi", "transport", "autobuz", "metrou",
-                "bilet", "abonament", "cfr", "tarom"
+                // Gas stations
+                "petrom", "rompetrol", "omv", "mol", "lukoil", "shell", "bp", "esso",
+                "benzina", "motorina", "combustibil", "carburant", "fuel",
+                // Parking and transport
+                "parcare", "parking", "uber", "bolt", "taxi", "transport",
+                "autobuz", "metrou", "stb", "ratb", "bilet", "abonament",
+                "cfr", "tarom", "train", "airplane", "bus"
             ),
             "Shopping" to listOf(
-                "emag", "altex", "flanco", "media galaxy", "dedeman", "leroy merlin",
-                "ikea", "jysk", "praktiker", "baumax", "bricostore",
-                "mall", "afi", "baneasa", "plaza", "shopping", "magazine",
-                "haine", "imbracaminte", "pantofi", "electronice", "mobila"
+                // Electronics and general retail
+                "emag", "altex", "flanco", "media galaxy", "pc garage",
+                "dedeman", "leroy merlin", "ikea", "jysk", "praktiker",
+                "mall", "shopping", "magazin", "store",
+                "haine", "imbracaminte", "pantofi", "shoes", "clothing",
+                "electronice", "electronics", "mobila", "furniture"
             ),
             "Healthcare" to listOf(
-                "farmacie", "catena", "help net", "dona", "sensiblu", "farmacia tei",
-                "spital", "clinica", "medic", "doctor", "dentist", "medicament",
-                "reteta", "consultatii", "analize", "radiografie"
+                "farmacie", "farmacy", "catena", "help net", "dona", "sensiblu", "farmacia tei",
+                "spital", "hospital", "clinica", "clinic", "medic", "doctor",
+                "dentist", "medicament", "medicine", "reteta", "prescription",
+                "consultatii", "consultation", "analize", "radiografie"
             ),
             "Utilities" to listOf(
                 "enel", "electrica", "e-on", "gdf suez", "engie", "distrigaz",
-                "apa", "nova", "rcs", "rds", "orange", "vodafone", "telekom",
-                "digi", "upc", "internet", "telefon", "curent", "gaz", "apa"
+                "apa", "water", "nova", "rcs", "rds", "orange", "vodafone",
+                "telekom", "digi", "upc", "internet", "telefon", "phone",
+                "curent", "electricity", "gaz", "gas", "factura", "bill"
             ),
             "Entertainment" to listOf(
-                "cinema", "cinematograf", "bilet", "concert", "teatru", "opera",
-                "muzeu", "parc", "distractii", "jocuri", "bowling", "karaoke",
-                "netflix", "hbo", "pro tv", "antena", "sport", "fitness"
+                "cinema", "cinematograf", "movie", "bilet", "ticket", "concert",
+                "teatru", "theater", "opera", "muzeu", "museum", "parc", "park",
+                "distractii", "entertainment", "jocuri", "games", "bowling",
+                "karaoke", "netflix", "hbo", "spotify", "subscription"
             )
         )
 
-        val categoryScores = mutableMapOf<String, Int>()
+        var bestCategory = "Other"
+        var maxScore = 0
 
         categoryPatterns.forEach { (category, keywords) ->
             var score = 0
             keywords.forEach { keyword ->
-                if (lowerText.contains(keyword)) {
-                    score += 2
-                }
+                val keywordCount = combinedText.split(keyword).size - 1
+                score += keywordCount * 2
+
+                // Bonus for exact merchant match
                 if (lowerMerchant.contains(keyword)) {
                     score += 5
                 }
-                // Exact match gets highest score
-                if (lowerMerchant == keyword || lowerMerchant.startsWith(keyword)) {
-                    score += 10
+
+                // Bonus for merchant name starting with keyword
+                if (lowerMerchant.startsWith(keyword)) {
+                    score += 3
                 }
             }
-            if (score > 0) {
-                categoryScores[category] = score
+
+            if (score > maxScore) {
+                maxScore = score
+                bestCategory = category
             }
         }
 
-        val result = categoryScores.maxByOrNull { it.value }?.key ?: "Other"
-        Log.d("ReceiptScanner", "Category guessing - scores: $categoryScores, result: $result")
-        return result
+        Log.d("EnhancedReceiptScanner", "Category detection - Best: $bestCategory (score: $maxScore)")
+        return bestCategory
     }
 
     fun createExpenseFromReceipt(receiptData: ReceiptData, userId: String): ExpenseDto {
@@ -440,13 +687,4 @@ class ReceiptScanner(private val context: Context) {
             receiptImageUrl = null
         )
     }
-
-    data class ReceiptData(
-        val success: Boolean,
-        val amount: Double = 0.0,
-        val merchantName: String = "",
-        val category: String = "Other",
-        val rawText: String = "",
-        val error: String = ""
-    )
 }

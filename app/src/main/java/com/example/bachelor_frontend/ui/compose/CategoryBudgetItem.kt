@@ -22,19 +22,16 @@ fun CategoryBudgetItem(
     currency: String,
     onEditClick: () -> Unit
 ) {
-    // Format for currency display
     val currencyFormat = remember(currency) {
         NumberFormat.getCurrencyInstance().apply {
             this.currency = Currency.getInstance(currency)
         }
     }
 
-    // Calculate budget progress
     val percentUsed = if (budget > 0) (spent / budget) * 100 else 0.0
     val isOverBudget = budget > 0 && spent > budget
     val remainingBudget = budget - spent
 
-    // Determine colors based on status
     val progressColor = when {
         percentUsed < 70 -> MaterialTheme.colorScheme.primary
         percentUsed < 90 -> Color(0xFFFFA000) // Amber
@@ -55,7 +52,6 @@ fun CategoryBudgetItem(
                 .fillMaxWidth()
                 .padding(16.dp)
         ) {
-            // Header with category name and edit button
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -74,7 +70,9 @@ fun CategoryBudgetItem(
                     Text(
                         text = category,
                         style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.Bold
+                        fontWeight = FontWeight.Bold,
+                        color = if (isOverBudget) Color.Black else MaterialTheme.colorScheme.onSurface
+
                     )
                 }
 
@@ -89,7 +87,6 @@ fun CategoryBudgetItem(
 
             Spacer(modifier = Modifier.height(8.dp))
 
-            // Budget and spending info
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween
@@ -97,7 +94,8 @@ fun CategoryBudgetItem(
                 Column {
                     Text(
                         text = "Budget",
-                        style = MaterialTheme.typography.bodySmall
+                        style = MaterialTheme.typography.bodySmall,
+                        color = if (isOverBudget) Color.Black else MaterialTheme.colorScheme.onSurface
                     )
 
                     Text(
@@ -110,7 +108,8 @@ fun CategoryBudgetItem(
                 Column(horizontalAlignment = Alignment.End) {
                     Text(
                         text = "Spent",
-                        style = MaterialTheme.typography.bodySmall
+                        style = MaterialTheme.typography.bodySmall,
+                        color = if (isOverBudget) Color.Black else MaterialTheme.colorScheme.onSurface
                     )
 
                     Text(
@@ -124,14 +123,14 @@ fun CategoryBudgetItem(
             Spacer(modifier = Modifier.height(4.dp))
 
             if (budget > 0) {
-                // Remaining budget
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
                     Text(
                         text = if (isOverBudget) "Over by:" else "Remaining:",
-                        style = MaterialTheme.typography.bodySmall
+                        style = MaterialTheme.typography.bodySmall,
+                        color = if (isOverBudget) Color.Black else MaterialTheme.colorScheme.onSurface
                     )
 
                     Text(
@@ -146,7 +145,6 @@ fun CategoryBudgetItem(
 
                 Spacer(modifier = Modifier.height(8.dp))
 
-                // Progress bar
                 Column {
                     LinearProgressIndicator(
                         progress = (percentUsed / 100).toFloat().coerceIn(0f, 1f),
@@ -161,11 +159,10 @@ fun CategoryBudgetItem(
                     Text(
                         text = "${String.format("%.1f", percentUsed)}% of budget used",
                         style = MaterialTheme.typography.bodySmall,
-                        color = progressColor
+                        color = if (isOverBudget) Color.Black else progressColor
                     )
                 }
             } else if (spent > 0) {
-                // Suggestion to set a budget
                 Spacer(modifier = Modifier.height(8.dp))
 
                 Card(
@@ -177,7 +174,8 @@ fun CategoryBudgetItem(
                     Text(
                         text = "Set a budget for this category to track your spending",
                         style = MaterialTheme.typography.bodySmall,
-                        modifier = Modifier.padding(8.dp)
+                        modifier = Modifier.padding(8.dp),
+                        color = if (isOverBudget) Color.Black else MaterialTheme.colorScheme.onSurface
                     )
                 }
             }

@@ -30,7 +30,6 @@ fun CategoryBudgetScreen(
 ) {
     val coroutineScope = rememberCoroutineScope()
 
-    // State from ViewModels
     val categories by userViewModel.categories.collectAsState()
     val categoryBudgets by userViewModel.categoryBudgets.collectAsState()
     val categorySpending by expenseViewModel.categorySpending.collectAsState()
@@ -41,20 +40,17 @@ fun CategoryBudgetScreen(
     val monthlyBudget by userViewModel.monthlyBudget.collectAsState()
     val loading by userViewModel.loading.collectAsState()
 
-    // Local state
     var editingCategory by remember { mutableStateOf<String?>(null) }
     var showSnackbar by remember { mutableStateOf(false) }
     var snackbarMessage by remember { mutableStateOf("") }
     var showDistributionDialog by remember { mutableStateOf(false) }
 
-    // Format for currency display
     val currencyFormat = remember(currency) {
         NumberFormat.getCurrencyInstance().apply {
             this.currency = Currency.getInstance(currency)
         }
     }
 
-    // Calculate total budget and spending
     val totalBudget = categoryBudgets.values.sum()
     val totalSpent = categorySpending.values.sum()
     val totalRemaining = totalBudget - totalSpent
@@ -91,7 +87,6 @@ fun CategoryBudgetScreen(
                     .padding(16.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                // Summary section
                 item {
                     Card(
                         modifier = Modifier
@@ -99,7 +94,8 @@ fun CategoryBudgetScreen(
                             .padding(bottom = 8.dp),
                         elevation = CardDefaults.cardElevation(defaultElevation = 4.dp),
                         colors = CardDefaults.cardColors(
-                            containerColor = if (isOverTotalBudget) Color(0xFFFFF3E0) else MaterialTheme.colorScheme.surface
+                            containerColor = if (isOverTotalBudget) Color(0xFFFFF3E0) else MaterialTheme.colorScheme.surface,
+                            contentColor = if (isOverTotalBudget) Color.Black else MaterialTheme.colorScheme.onSurface
                         )
                     ) {
                         Column(
@@ -134,7 +130,6 @@ fun CategoryBudgetScreen(
 
                             Spacer(modifier = Modifier.height(16.dp))
 
-                            // Monthly budget info
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
                                 horizontalArrangement = Arrangement.SpaceBetween
@@ -168,7 +163,6 @@ fun CategoryBudgetScreen(
 
                             Spacer(modifier = Modifier.height(8.dp))
 
-                            // Allocation progress bar
                             if (monthlyBudget > 0) {
                                 val allocatedPercentage = (totalBudget / monthlyBudget * 100).coerceIn(0.0, 100.0)
 
@@ -222,7 +216,6 @@ fun CategoryBudgetScreen(
 
                             Divider(modifier = Modifier.padding(vertical = 16.dp))
 
-                            // Spending summary
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
                                 horizontalArrangement = Arrangement.SpaceBetween
@@ -302,7 +295,6 @@ fun CategoryBudgetScreen(
                                 )
                             }
 
-                            // Budget alert
                             if (overBudgetCategories.isNotEmpty()) {
                                 Spacer(modifier = Modifier.height(16.dp))
 
@@ -339,7 +331,6 @@ fun CategoryBudgetScreen(
                     )
                 }
 
-                // Category budget items
                 items(categories.sorted()) { category ->
                     val analysis = categoryAnalysis[category]
                     val budget = categoryBudgets[category] ?: 0.0
@@ -356,20 +347,17 @@ fun CategoryBudgetScreen(
                     )
                 }
 
-                // Bottom space
                 item {
                     Spacer(modifier = Modifier.height(80.dp))
                 }
             }
 
-            // Show loading indicator
             if (loading) {
                 CircularProgressIndicator(
                     modifier = Modifier.align(Alignment.Center)
                 )
             }
 
-            // Show snackbar
             if (showSnackbar) {
                 Snackbar(
                     modifier = Modifier
@@ -387,7 +375,6 @@ fun CategoryBudgetScreen(
         }
     }
 
-    // Category budget edit dialog
     editingCategory?.let { category ->
         val currentBudget = categoryBudgets[category] ?: 0.0
 
@@ -408,7 +395,6 @@ fun CategoryBudgetScreen(
         )
     }
 
-    // Budget distribution dialog
     if (showDistributionDialog) {
         BudgetDistributionDialog(
             categories = categories,
@@ -417,7 +403,6 @@ fun CategoryBudgetScreen(
             currency = currency,
             onDistribute = { newBudgets ->
                 coroutineScope.launch {
-                    // Update each category budget
                     for ((category, budget) in newBudgets) {
                         userViewModel.updateCategoryBudget(category, budget)
                     }

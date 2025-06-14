@@ -22,7 +22,6 @@ class AuthRepository {
     val authState: StateFlow<AuthState> = _authState
 
     init {
-        // Listen for authentication state changes
         firebaseAuth.addAuthStateListener { auth ->
             val currentUser = auth.currentUser
             if (currentUser != null) {
@@ -42,16 +41,12 @@ class AuthRepository {
         }
     }
 
-    /**
-     * Create an account with email and password
-     */
     suspend fun createAccountWithEmail(email: String, password: String): Result<FirebaseUser> {
         return try {
             val authResult = firebaseAuth.createUserWithEmailAndPassword(email, password).await()
             val user = authResult.user
 
             if (user != null) {
-                // Create user profile in Firestore
                 createUserProfile(user)
                 Result.success(user)
             } else {
@@ -66,9 +61,6 @@ class AuthRepository {
         }
     }
 
-    /**
-     * Sign in with email and password
-     */
     suspend fun signInWithEmail(email: String, password: String): Result<FirebaseUser> {
         return try {
             val authResult = firebaseAuth.signInWithEmailAndPassword(email, password).await()
@@ -88,9 +80,6 @@ class AuthRepository {
         }
     }
 
-    /**
-     * Sign in with Google
-     */
     suspend fun signInWithGoogle(googleAccount: GoogleSignInAccount): Result<FirebaseUser> {
         return try {
             val credential = GoogleAuthProvider.getCredential(googleAccount.idToken, null)
@@ -98,7 +87,6 @@ class AuthRepository {
             val user = authResult.user
 
             if (user != null) {
-                // Check if this is a new user
                 if (authResult.additionalUserInfo?.isNewUser == true) {
                     createUserProfile(user)
                 }
@@ -115,16 +103,12 @@ class AuthRepository {
         }
     }
 
-    /**
-     * Sign in anonymously
-     */
     suspend fun signInAnonymously(): Result<FirebaseUser> {
         return try {
             val authResult = firebaseAuth.signInAnonymously().await()
             val user = authResult.user
 
             if (user != null) {
-                // Create a basic profile for anonymous users
                 createUserProfile(user, isAnonymous = true)
                 Result.success(user)
             } else {
@@ -139,9 +123,6 @@ class AuthRepository {
         }
     }
 
-    /**
-     * Convert anonymous account to permanent account
-     */
     suspend fun convertAnonymousAccount(email: String, password: String): Result<FirebaseUser> {
         val currentUser = firebaseAuth.currentUser
 
@@ -155,7 +136,6 @@ class AuthRepository {
             val user = authResult.user
 
             if (user != null) {
-                // Update the user profile to mark as non-anonymous
                 updateUserProfileOnConversion(user)
                 Result.success(user)
             } else {
@@ -170,9 +150,6 @@ class AuthRepository {
         }
     }
 
-    /**
-     * Send password reset email
-     */
     suspend fun sendPasswordResetEmail(email: String): Result<Unit> {
         return try {
             firebaseAuth.sendPasswordResetEmail(email).await()
@@ -186,25 +163,15 @@ class AuthRepository {
         }
     }
 
-    /**
-     * Sign out
-     */
     fun signOut() {
         firebaseAuth.signOut()
     }
 
-    /**
-     * Get current user
-     */
     fun getCurrentUser(): FirebaseUser? {
         return firebaseAuth.currentUser
     }
 
-    /**
-     * Create user profile in Firestore
-     */
     private suspend fun createUserProfile(user: FirebaseUser, isAnonymous: Boolean = false) {
-        // Default categories for new users
         val defaultCategories = listOf(
             "Food",
             "Transportation",
@@ -216,10 +183,8 @@ class AuthRepository {
             "Other"
         )
 
-        // Default category budgets (all zero)
         val defaultCategoryBudgets = defaultCategories.associateWith { 0.0 }
 
-        // Create user profile object
         val userProfile = hashMapOf(
             "userId" to user.uid,
             "email" to (user.email ?: ""),
@@ -232,7 +197,6 @@ class AuthRepository {
             "categoryBudgets" to defaultCategoryBudgets
         )
 
-        // Save to Firestore
         try {
             firestore.collection("users")
                 .document(user.uid)
@@ -246,9 +210,6 @@ class AuthRepository {
         }
     }
 
-    /**
-     * Update user profile when converting from anonymous
-     */
     private suspend fun updateUserProfileOnConversion(user: FirebaseUser) {
         try {
             firestore.collection("users")
@@ -269,9 +230,6 @@ class AuthRepository {
         }
     }
 
-    /**
-     * Parse Firebase Auth exceptions into user-friendly messages
-     */
     private fun parseAuthException(e: FirebaseAuthException): Exception {
         val errorMessage = when (e.errorCode) {
             "ERROR_INVALID_EMAIL" -> "The email address is badly formatted."
@@ -290,9 +248,6 @@ class AuthRepository {
     }
 }
 
-/**
- * Authentication state for the app
- */
 sealed class AuthState {
     object Initializing : AuthState()
     object Unauthenticated : AuthState()

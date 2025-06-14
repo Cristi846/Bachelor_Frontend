@@ -1,7 +1,9 @@
 package com.example.bachelor_frontend.ui.pages
 
+import android.Manifest
 import android.content.Intent
 import android.net.Uri
+import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
@@ -19,6 +21,8 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.example.bachelor_frontend.utils.NotificationPreferences
+import com.example.bachelor_frontend.utils.NotificationScheduler
 import com.example.bachelor_frontend.viewmodel.ExpenseViewModel
 import com.example.bachelor_frontend.viewmodel.UserViewModel
 import kotlinx.coroutines.launch
@@ -43,16 +47,32 @@ fun SettingsScreen(
     val userCurrency by userViewModel.currency.collectAsState()
     val categoryBudgets by userViewModel.categoryBudgets.collectAsState()
 
+    // Notification preferences
+    val notificationPreferences = remember { NotificationPreferences(context) }
+    val notificationScheduler = remember { NotificationScheduler(context) }
+
+    val notificationsEnabled by notificationPreferences.notificationsEnabled.collectAsState()
+    val budgetAlertsEnabled by notificationPreferences.budgetAlertsEnabled.collectAsState()
+    val dailyRemindersEnabled by notificationPreferences.dailyRemindersEnabled.collectAsState()
+    val budgetAlertThreshold by notificationPreferences.budgetAlertThreshold.collectAsState()
+    val reminderTimeHour by notificationPreferences.reminderTimeHour.collectAsState()
+    val reminderTimeMinute by notificationPreferences.reminderTimeMinute.collectAsState()
+
     // State variables
-    var isSystemTheme by remember { mutableStateOf(true) }
-    var darkMode by remember { mutableStateOf(false) }
-    var showNotifications by remember { mutableStateOf(true) }
-    var exportFormat by remember { mutableStateOf("CSV") }
     var showAboutDialog by remember { mutableStateOf(false) }
     var showPrivacyDialog by remember { mutableStateOf(false) }
-    var showDeleteConfirmDialog by remember { mutableStateOf(false) }
-    var showThemeDialog by remember { mutableStateOf(false) }
     var showCurrencyDialog by remember { mutableStateOf(false) }
+    var showThresholdDialog by remember { mutableStateOf(false) }
+    var showTimePickerDialog by remember { mutableStateOf(false) }
+
+    // Permission launcher for notifications
+    val notificationPermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission()
+    ) { isGranted ->
+        if (isGranted) {
+            notificationPreferences.setNotificationsEnabled(true)
+        }
+    }
 
     // State for feedback
     var showFeedback by remember { mutableStateOf(false) }
@@ -61,7 +81,7 @@ fun SettingsScreen(
     // Format currency
     val currencyFormat = remember(userCurrency) {
         NumberFormat.getCurrencyInstance().apply {
-            this.currency = Currency.getInstance(userCurrency)
+            currency = Currency.getInstance(userCurrency)
         }
     }
 
@@ -131,74 +151,6 @@ fun SettingsScreen(
 
             // Budget Settings
             SettingSection(title = "Budget Settings") {
-                // Monthly Budget
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clickable { /* Implement budget editing */ }
-                        .padding(vertical = 12.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(
-                            imageVector = Icons.Default.AttachMoney,
-                            contentDescription = "Monthly Budget",
-                            tint = MaterialTheme.colorScheme.primary
-                        )
-                        Spacer(modifier = Modifier.width(16.dp))
-                        Column {
-                            Text("Monthly Budget")
-                            Text(
-                                text = currencyFormat.format(monthlyBudget),
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
-                            )
-                        }
-                    }
-                    Icon(
-                        imageVector = Icons.Default.ChevronRight,
-                        contentDescription = "Edit Budget",
-                        tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.3f)
-                    )
-                }
-
-                Divider()
-
-                // Category Budgets
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clickable { onNavigateToCategoryBudgets() }
-                        .padding(vertical = 12.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(
-                            imageVector = Icons.Default.AccountBalance,
-                            contentDescription = "Category Budgets",
-                            tint = MaterialTheme.colorScheme.primary
-                        )
-                        Spacer(modifier = Modifier.width(16.dp))
-                        Column {
-                            Text("Category Budgets")
-                            Text(
-                                text = "${categoryBudgets.count { it.value > 0 }} of ${categories.size} categories with budgets set",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
-                            )
-                        }
-                    }
-                    Icon(
-                        imageVector = Icons.Default.ChevronRight,
-                        contentDescription = "View Category Budgets",
-                        tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.3f)
-                    )
-                }
-
-                Divider()
-
                 // Currency settings
                 Row(
                     modifier = Modifier
@@ -232,41 +184,6 @@ fun SettingsScreen(
                 }
             }
 
-            // Appearance Settings
-            SettingSection(title = "Appearance") {
-                // Theme Toggle
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clickable { showThemeDialog = true }
-                        .padding(vertical = 12.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(
-                            imageVector = Icons.Default.Palette,
-                            contentDescription = "Theme Settings",
-                            tint = MaterialTheme.colorScheme.primary
-                        )
-                        Spacer(modifier = Modifier.width(16.dp))
-                        Column {
-                            Text("App Theme")
-                            Text(
-                                text = if (isSystemTheme) "System Default" else if (darkMode) "Dark" else "Light",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
-                            )
-                        }
-                    }
-                    Icon(
-                        imageVector = Icons.Default.ChevronRight,
-                        contentDescription = "Change Theme",
-                        tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.3f)
-                    )
-                }
-            }
-
             // Notifications Settings
             SettingSection(title = "Notifications") {
                 Row(
@@ -286,15 +203,26 @@ fun SettingsScreen(
                         Text("Enable Notifications")
                     }
                     Switch(
-                        checked = showNotifications,
-                        onCheckedChange = { showNotifications = it }
+                        checked = notificationsEnabled,
+                        onCheckedChange = { enabled ->
+                            if (enabled && Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                                notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+                            } else {
+                                notificationPreferences.setNotificationsEnabled(enabled)
+                                if (!enabled) {
+                                    // Cancel daily reminders when notifications are disabled
+                                    notificationScheduler.cancelDailyReminder()
+                                }
+                            }
+                        }
                     )
                 }
 
                 // Only show these options if notifications are enabled
-                if (showNotifications) {
+                if (notificationsEnabled) {
                     Divider()
 
+                    // Budget Alerts
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -310,23 +238,38 @@ fun SettingsScreen(
                                 modifier = Modifier.size(20.dp)
                             )
                             Spacer(modifier = Modifier.width(16.dp))
-                            Column {
+                            Column(modifier = Modifier.weight(1f)) {
                                 Text("Budget Alerts")
                                 Text(
-                                    text = "Get notified when you're close to your budget limit",
+                                    text = "Get notified at ${budgetAlertThreshold}% of budget limit",
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
                                 )
                             }
                         }
-                        Switch(
-                            checked = true,
-                            onCheckedChange = { /* Implement budget alert setting change */ }
-                        )
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            IconButton(
+                                onClick = { showThresholdDialog = true },
+                                modifier = Modifier.size(32.dp)
+                            ) {
+                                Icon(
+                                    Icons.Default.Settings,
+                                    contentDescription = "Settings",
+                                    modifier = Modifier.size(16.dp)
+                                )
+                            }
+                            Switch(
+                                checked = budgetAlertsEnabled,
+                                onCheckedChange = {
+                                    notificationPreferences.setBudgetAlertsEnabled(it)
+                                }
+                            )
+                        }
                     }
 
                     Divider()
 
+                    // Daily Reminders
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -342,121 +285,39 @@ fun SettingsScreen(
                                 modifier = Modifier.size(20.dp)
                             )
                             Spacer(modifier = Modifier.width(16.dp))
-                            Column {
+                            Column(modifier = Modifier.weight(1f)) {
                                 Text("Daily Reminders")
                                 Text(
-                                    text = "Remind me to add expenses at the end of the day",
+                                    text = "Remind me at ${String.format("%02d:%02d", reminderTimeHour, reminderTimeMinute)}",
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
                                 )
                             }
                         }
-                        Switch(
-                            checked = false,
-                            onCheckedChange = { /* Implement daily reminder setting change */ }
-                        )
-                    }
-                }
-            }
-
-            // Data & Backup Settings
-            SettingSection(title = "Data & Backup") {
-                // Export Data
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clickable {
-                            /* Implement data export functionality */
-                            feedbackMessage = "Data exported successfully"
-                            showFeedback = true
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            IconButton(
+                                onClick = { showTimePickerDialog = true },
+                                modifier = Modifier.size(32.dp)
+                            ) {
+                                Icon(
+                                    Icons.Default.Schedule,
+                                    contentDescription = "Set Time",
+                                    modifier = Modifier.size(16.dp)
+                                )
+                            }
+                            Switch(
+                                checked = dailyRemindersEnabled,
+                                onCheckedChange = { enabled ->
+                                    notificationPreferences.setDailyRemindersEnabled(enabled)
+                                    if (enabled) {
+                                        notificationScheduler.scheduleDailyReminder(reminderTimeHour, reminderTimeMinute)
+                                    } else {
+                                        notificationScheduler.cancelDailyReminder()
+                                    }
+                                }
+                            )
                         }
-                        .padding(vertical = 12.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.CloudDownload,
-                        contentDescription = "Export Data",
-                        tint = MaterialTheme.colorScheme.primary
-                    )
-                    Spacer(modifier = Modifier.width(16.dp))
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text("Export Financial Data")
-                        Text(
-                            text = "Save your data to a file",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
-                        )
                     }
-                    Icon(
-                        imageVector = Icons.Default.ChevronRight,
-                        contentDescription = "Export",
-                        tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.3f)
-                    )
-                }
-
-                Divider()
-
-                // Import Data
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clickable { /* Implement data import functionality */ }
-                        .padding(vertical = 12.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.CloudUpload,
-                        contentDescription = "Import Data",
-                        tint = MaterialTheme.colorScheme.primary
-                    )
-                    Spacer(modifier = Modifier.width(16.dp))
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text("Import Data")
-                        Text(
-                            text = "Import data from a file",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
-                        )
-                    }
-                    Icon(
-                        imageVector = Icons.Default.ChevronRight,
-                        contentDescription = "Import",
-                        tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.3f)
-                    )
-                }
-
-                Divider()
-
-                // Clear Data
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clickable { showDeleteConfirmDialog = true }
-                        .padding(vertical = 12.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.DeleteForever,
-                        contentDescription = "Delete All Data",
-                        tint = MaterialTheme.colorScheme.error
-                    )
-                    Spacer(modifier = Modifier.width(16.dp))
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            text = "Delete All Data",
-                            color = MaterialTheme.colorScheme.error
-                        )
-                        Text(
-                            text = "Remove all your financial records",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
-                        )
-                    }
-                    Icon(
-                        imageVector = Icons.Default.ChevronRight,
-                        contentDescription = "Delete",
-                        tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.3f)
-                    )
                 }
             }
 
@@ -570,49 +431,163 @@ fun SettingsScreen(
             }
         }
 
-        // Theme Dialog
-        if (showThemeDialog) {
+        // Budget Alert Threshold Dialog
+        if (showThresholdDialog) {
+            var thresholdValue by remember { mutableStateOf(budgetAlertThreshold.toString()) }
+
             AlertDialog(
-                onDismissRequest = { showThemeDialog = false },
-                title = { Text("Choose Theme") },
+                onDismissRequest = { showThresholdDialog = false },
+                title = { Text("Budget Alert Threshold") },
                 text = {
                     Column {
-                        RadioButtonOption(
-                            text = "System Default",
-                            selected = isSystemTheme,
-                            onClick = {
-                                isSystemTheme = true
-                                showThemeDialog = false
-                            }
+                        Text("Get notified when you reach this percentage of your budget:")
+
+                        Spacer(modifier = Modifier.height(16.dp))
+
+                        OutlinedTextField(
+                            value = thresholdValue,
+                            onValueChange = {
+                                if (it.all { char -> char.isDigit() } && it.length <= 2) {
+                                    thresholdValue = it
+                                }
+                            },
+                            label = { Text("Threshold (%)") },
+                            trailingIcon = { Text("%") },
+                            modifier = Modifier.fillMaxWidth()
                         )
-                        RadioButtonOption(
-                            text = "Light Theme",
-                            selected = !isSystemTheme && !darkMode,
-                            onClick = {
-                                isSystemTheme = false
-                                darkMode = false
-                                showThemeDialog = false
-                            }
-                        )
-                        RadioButtonOption(
-                            text = "Dark Theme",
-                            selected = !isSystemTheme && darkMode,
-                            onClick = {
-                                isSystemTheme = false
-                                darkMode = true
-                                showThemeDialog = false
-                            }
+
+                        Spacer(modifier = Modifier.height(8.dp))
+
+                        Text(
+                            text = "Recommended: 80% (between 50% and 95%)",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
                         )
                     }
                 },
                 confirmButton = {
-                    TextButton(onClick = { showThemeDialog = false }) {
+                    Button(
+                        onClick = {
+                            val threshold = thresholdValue.toIntOrNull()
+                            if (threshold != null && threshold in 50..95) {
+                                notificationPreferences.setBudgetAlertThreshold(threshold)
+                                showThresholdDialog = false
+                                feedbackMessage = "Budget alert threshold updated to $threshold%"
+                                showFeedback = true
+                            }
+                        }
+                    ) {
+                        Text("Save")
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = { showThresholdDialog = false }) {
                         Text("Cancel")
                     }
                 }
             )
         }
 
+        // Time Picker Dialog for Daily Reminders
+        if (showTimePickerDialog) {
+            var selectedHour by remember { mutableStateOf(reminderTimeHour) }
+            var selectedMinute by remember { mutableStateOf(reminderTimeMinute) }
+
+            AlertDialog(
+                onDismissRequest = { showTimePickerDialog = false },
+                title = { Text("Set Reminder Time") },
+                text = {
+                    Column {
+                        Text("Choose when you'd like to be reminded:")
+
+                        Spacer(modifier = Modifier.height(16.dp))
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceEvenly,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            // Hour picker
+                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                Text("Hour", style = MaterialTheme.typography.labelMedium)
+                                OutlinedTextField(
+                                    value = String.format("%02d", selectedHour),
+                                    onValueChange = { value ->
+                                        val hour = value.toIntOrNull()
+                                        if (hour != null && hour in 0..23) {
+                                            selectedHour = hour
+                                        }
+                                    },
+                                    modifier = Modifier.width(80.dp)
+                                )
+                            }
+
+                            Text(":", style = MaterialTheme.typography.headlineMedium)
+
+                            // Minute picker
+                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                Text("Minute", style = MaterialTheme.typography.labelMedium)
+                                OutlinedTextField(
+                                    value = String.format("%02d", selectedMinute),
+                                    onValueChange = { value ->
+                                        val minute = value.toIntOrNull()
+                                        if (minute != null && minute in 0..59) {
+                                            selectedMinute = minute
+                                        }
+                                    },
+                                    modifier = Modifier.width(80.dp)
+                                )
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(16.dp))
+
+                        // Quick time presets
+                        Text("Quick presets:", style = MaterialTheme.typography.labelMedium)
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            FilterChip(
+                                selected = selectedHour == 9 && selectedMinute == 0,
+                                onClick = { selectedHour = 9; selectedMinute = 0 },
+                                label = { Text("9:00") }
+                            )
+                            FilterChip(
+                                selected = selectedHour == 18 && selectedMinute == 0,
+                                onClick = { selectedHour = 18; selectedMinute = 0 },
+                                label = { Text("18:00") }
+                            )
+                            FilterChip(
+                                selected = selectedHour == 20 && selectedMinute == 0,
+                                onClick = { selectedHour = 20; selectedMinute = 0 },
+                                label = { Text("20:00") }
+                            )
+                        }
+                    }
+                },
+                confirmButton = {
+                    Button(
+                        onClick = {
+                            notificationPreferences.setReminderTime(selectedHour, selectedMinute)
+                            if (dailyRemindersEnabled) {
+                                notificationScheduler.rescheduleDailyReminder(selectedHour, selectedMinute)
+                            }
+                            showTimePickerDialog = false
+                            feedbackMessage = "Reminder time updated to ${String.format("%02d:%02d", selectedHour, selectedMinute)}"
+                            showFeedback = true
+                        }
+                    ) {
+                        Text("Save")
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = { showTimePickerDialog = false }) {
+                        Text("Cancel")
+                    }
+                }
+            )
+        }
         // Currency Dialog
         if (showCurrencyDialog) {
             AlertDialog(
@@ -691,37 +666,6 @@ fun SettingsScreen(
                 confirmButton = {
                     TextButton(onClick = { showPrivacyDialog = false }) {
                         Text("Close")
-                    }
-                }
-            )
-        }
-
-        // Delete Confirmation Dialog
-        if (showDeleteConfirmDialog) {
-            AlertDialog(
-                onDismissRequest = { showDeleteConfirmDialog = false },
-                title = { Text("Delete All Data?") },
-                text = {
-                    Text("This will permanently remove all your financial records and cannot be undone. Are you sure you want to continue?")
-                },
-                confirmButton = {
-                    Button(
-                        onClick = {
-                            showDeleteConfirmDialog = false
-                            // Implement data deletion
-                            feedbackMessage = "All data has been deleted"
-                            showFeedback = true
-                        },
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = MaterialTheme.colorScheme.error
-                        )
-                    ) {
-                        Text("Delete")
-                    }
-                },
-                dismissButton = {
-                    TextButton(onClick = { showDeleteConfirmDialog = false }) {
-                        Text("Cancel")
                     }
                 }
             )

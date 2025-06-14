@@ -7,7 +7,10 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Groups
+import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -20,8 +23,11 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.viewmodel.compose.viewModel
+import com.example.bachelor_frontend.classes.BudgetType
 import com.example.bachelor_frontend.classes.ExpenseDto
 import com.example.bachelor_frontend.viewmodel.ExpenseViewModel
+import com.example.bachelor_frontend.viewmodel.FamilyViewModel
 import com.example.bachelor_frontend.viewmodel.UserViewModel
 import java.text.NumberFormat
 import java.time.LocalDateTime
@@ -36,35 +42,80 @@ fun AnalyticsScreen(
     monthlyBudget: Double,
     expenseViewModel: ExpenseViewModel,
     userViewModel: UserViewModel,
+    familyViewModel: FamilyViewModel = viewModel(),
     onNavigateToCategoryBudgets: () -> Unit
 ) {
-    // State from ViewModels
     val categorySpending by expenseViewModel.categorySpending.collectAsState()
     val categoryBudgets by userViewModel.categoryBudgets.collectAsState()
     val categoryAnalysis by expenseViewModel.categoryAnalysis.collectAsState()
     val overBudgetCategories by expenseViewModel.overBudgetCategories.collectAsState()
     val currency by userViewModel.currency.collectAsState()
 
-    // State for selected month (default to current month)
     var selectedMonth by remember { mutableStateOf(LocalDateTime.now().month) }
     val selectedYear by remember { mutableStateOf(LocalDateTime.now().year) }
 
-    // Call the ViewModel to update data when selection changes
+    val userFamily by familyViewModel.family.collectAsState()
+    val familyAnalytics by familyViewModel.familyAnalytics.collectAsState()
+    val familyExpenses by familyViewModel.familyExpenses.collectAsState()
+    var showingFamilyAnalytics by remember { mutableStateOf(false) }
+
+    val relevantExpenses = if (showingFamilyAnalytics) {
+        // Use family expenses when showing family analytics
+        familyExpenses.filter { expense ->
+            val expenseMonth = expense.timestamp.month
+            val expenseYear = expense.timestamp.year
+            expenseMonth == selectedMonth && expenseYear == selectedYear
+        }
+    } else {
+        // Use personal expenses
+        expenses.filter { expense ->
+            val expenseMonth = expense.timestamp.month
+            val expenseYear = expense.timestamp.year
+            val monthMatches = expenseMonth == selectedMonth && expenseYear == selectedYear
+            val budgetMatches = expense.budgetType == BudgetType.PERSONAL
+            monthMatches && budgetMatches
+        }
+    }
+
+    val filteredCategorySpending = relevantExpenses.groupBy { it.category }
+        .mapValues { (_, expenses) -> expenses.sumOf { it.amount }}
+
     LaunchedEffect(selectedMonth, selectedYear) {
         expenseViewModel.setSelectedMonth(selectedMonth, selectedYear)
     }
 
-    // Format for currency display
-    val currencyFormat = remember(currency) {
+    // Use family currency when showing family analytics
+    val displayCurrency = if (showingFamilyAnalytics && userFamily != null) {
+        userFamily!!.sharedBudget.currency
+    } else {
+        currency
+    }
+
+    val currencyFormat = remember(displayCurrency) {
         NumberFormat.getCurrencyInstance().apply {
-            this.currency = Currency.getInstance(currency)
+            this.currency = Currency.getInstance(displayCurrency)
         }
     }
 
-    // Calculate total spending
-    val totalSpending = categorySpending.values.sum()
+    val totalSpending = relevantExpenses.sumOf { it.amount }
 
-    // Generate colors for the pie chart
+    val budgetToUse = if (showingFamilyAnalytics && userFamily != null) {
+        userFamily!!.sharedBudget.monthlyBudget
+    } else {
+        monthlyBudget
+    }
+
+    val categoryBudgetsToUse = if (showingFamilyAnalytics && userFamily != null) {
+        userFamily!!.sharedBudget.categoryBudgets
+    } else {
+        categoryBudgets
+    }
+
+    val overBudgetCategoriesFiltered = filteredCategorySpending.filter { (category, spent) ->
+        val budget = categoryBudgetsToUse[category] ?: 0.0
+        spent > budget && budget > 0.0
+    }.keys.toList()
+
     val colors = remember {
         listOf(
             Color(0xFF4CAF50),  // Green
@@ -96,17 +147,49 @@ fun AnalyticsScreen(
                 .padding(16.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            // Month selector
             item {
                 MonthSelector(
                     selectedMonth = selectedMonth,
                     onMonthSelected = { selectedMonth = it }
                 )
+                if (userFamily != null) {
+                    Spacer(modifier = Modifier.height(16.dp))
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        FilterChip(
+                            selected = !showingFamilyAnalytics,
+                            onClick = { showingFamilyAnalytics = false },
+                            label = {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Icon(Icons.Default.Person, contentDescription = null, modifier = Modifier.size(16.dp))
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Text("Personal Analytics")
+                                }
+                            },
+                            modifier = Modifier.weight(1f)
+                        )
+
+                        FilterChip(
+                            selected = showingFamilyAnalytics,
+                            onClick = { showingFamilyAnalytics = true },
+                            label = {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Icon(Icons.Default.Groups, contentDescription = null, modifier = Modifier.size(16.dp))
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Text("${userFamily!!.name} Analytics")
+                                }
+                            },
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
+                }
 
                 Spacer(modifier = Modifier.height(16.dp))
             }
 
-            // Spending summary
             item {
                 Card(
                     modifier = Modifier.fillMaxWidth(),
@@ -128,15 +211,15 @@ fun AnalyticsScreen(
                         Text(
                             text = currencyFormat.format(totalSpending),
                             style = MaterialTheme.typography.headlineMedium,
-                            color = if (totalSpending > monthlyBudget && monthlyBudget > 0)
+                            color = if (totalSpending > budgetToUse && budgetToUse > 0)
                                 Color(0xFFF44336) else MaterialTheme.colorScheme.primary,
                             fontWeight = FontWeight.Bold
                         )
 
                         Spacer(modifier = Modifier.height(8.dp))
 
-                        if (monthlyBudget > 0) {
-                            val progress = (totalSpending / monthlyBudget).coerceIn(0.0, 1.0).toFloat()
+                        if (budgetToUse > 0) {
+                            val progress = (totalSpending / budgetToUse).coerceIn(0.0, 1.0).toFloat()
                             val progressColor = when {
                                 progress < 0.7 -> MaterialTheme.colorScheme.primary
                                 progress < 0.9 -> Color(0xFFFFA000) // Amber
@@ -154,7 +237,7 @@ fun AnalyticsScreen(
                             Spacer(modifier = Modifier.height(4.dp))
 
                             Text(
-                                text = "${(progress * 100).toInt()}% of monthly budget used",
+                                text = "${(progress * 100).toInt()}% of ${if (showingFamilyAnalytics) "family" else "monthly"} budget used",
                                 style = MaterialTheme.typography.bodySmall
                             )
                         }
@@ -164,7 +247,6 @@ fun AnalyticsScreen(
                 Spacer(modifier = Modifier.height(16.dp))
             }
 
-            // Category Budget Summary
             item {
                 Card(
                     modifier = Modifier.fillMaxWidth(),
@@ -175,7 +257,6 @@ fun AnalyticsScreen(
                             .fillMaxWidth()
                             .padding(16.dp)
                     ) {
-                        // Header with button to budget screen
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.SpaceBetween,
@@ -199,8 +280,7 @@ fun AnalyticsScreen(
 
                         Spacer(modifier = Modifier.height(8.dp))
 
-                        // Show number of categories over budget
-                        if (overBudgetCategories.isNotEmpty()) {
+                        if (overBudgetCategoriesFiltered.isNotEmpty()) {
                             Row(
                                 modifier = Modifier
                                     .fillMaxWidth()
@@ -219,7 +299,7 @@ fun AnalyticsScreen(
                                 )
 
                                 Text(
-                                    text = "${overBudgetCategories.size} ${if (overBudgetCategories.size == 1) "category is" else "categories are"} over budget",
+                                    text = "${overBudgetCategoriesFiltered.size} ${if (overBudgetCategoriesFiltered.size == 1) "category is" else "categories are"} over budget",
                                     style = MaterialTheme.typography.bodyMedium,
                                     color = Color.Red
                                 )
@@ -228,17 +308,15 @@ fun AnalyticsScreen(
                             Spacer(modifier = Modifier.height(8.dp))
                         }
 
-                        // List of over budget categories
-                        if (overBudgetCategories.isNotEmpty()) {
+                        if (overBudgetCategoriesFiltered.isNotEmpty()) {
                             Column(
                                 modifier = Modifier.fillMaxWidth()
                             ) {
-                                overBudgetCategories.forEach { category ->
-                                    val analysis = categoryAnalysis[category]
-                                    val budget = analysis?.get("budget") ?: 0.0
-                                    val spent = analysis?.get("spent") ?: 0.0
+                                overBudgetCategoriesFiltered.forEach { category ->
+                                    val budget = categoryBudgetsToUse[category] ?: 0.0
+                                    val spent = filteredCategorySpending[category] ?: 0.0
                                     val overAmount = spent - budget
-                                    val percentOver = (overAmount / budget) * 100
+                                    val percentOver = if (budget > 0) (overAmount / budget) * 100 else 0.0
 
                                     Row(
                                         modifier = Modifier
@@ -260,8 +338,7 @@ fun AnalyticsScreen(
                                     }
                                 }
                             }
-                        } else if (categoryBudgets.any { it.value > 0 }) {
-                            // All categories under budget
+                        } else if (categoryBudgetsToUse.any { it.value > 0 }) {
                             Text(
                                 text = "All category spending is within budget",
                                 style = MaterialTheme.typography.bodyMedium,
@@ -269,7 +346,6 @@ fun AnalyticsScreen(
                                 modifier = Modifier.padding(vertical = 4.dp)
                             )
                         } else {
-                            // No budgets set
                             Text(
                                 text = "Set category budgets to track your spending more effectively",
                                 style = MaterialTheme.typography.bodyMedium,
@@ -282,9 +358,8 @@ fun AnalyticsScreen(
                 Spacer(modifier = Modifier.height(24.dp))
             }
 
-            // Pie Chart
             item {
-                if (categorySpending.isEmpty()) {
+                if (filteredCategorySpending.isEmpty()) {
                     Card(
                         modifier = Modifier.fillMaxWidth(),
                         elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
@@ -309,7 +384,6 @@ fun AnalyticsScreen(
                         modifier = Modifier.padding(bottom = 16.dp)
                     )
 
-                    // Draw pie chart
                     Box(
                         modifier = Modifier
                             .size(240.dp)
@@ -317,18 +391,16 @@ fun AnalyticsScreen(
                         contentAlignment = Alignment.Center
                     ) {
                         val surfaceColor = MaterialTheme.colorScheme.surface
-                        // Main pie chart
                         Canvas(modifier = Modifier.fillMaxSize()) {
                             val radius = size.minDimension / 2
                             val center = Offset(size.width / 2, size.height / 2)
 
                             var startAngle = 0f
 
-                            categorySpending.entries.sortedByDescending { it.value }.forEachIndexed { index, (_, amount) ->
+                            filteredCategorySpending.entries.sortedByDescending { it.value }.forEachIndexed { index, (_, amount) ->
                                 val sweepAngle = (amount / totalSpending * 360).toFloat()
                                 val color = colors[index % colors.size]
 
-                                // Draw pie slice
                                 drawArc(
                                     color = color,
                                     startAngle = startAngle,
@@ -338,7 +410,6 @@ fun AnalyticsScreen(
                                     size = Size(radius * 2, radius * 2)
                                 )
 
-                                // Draw outline
                                 drawArc(
                                     color = Color.White,
                                     startAngle = startAngle,
@@ -352,7 +423,6 @@ fun AnalyticsScreen(
                                 startAngle += sweepAngle
                             }
 
-                            // Draw inner circle
                             drawCircle(
                                 color = surfaceColor,
                                 radius = size.minDimension / 6,
@@ -365,15 +435,13 @@ fun AnalyticsScreen(
                 }
             }
 
-            // Category legend and breakdown
-            if (categorySpending.isNotEmpty()) {
-                items(categorySpending.entries.sortedByDescending { it.value }.toList()) { (category, amount) ->
-                    val index = categorySpending.entries.sortedByDescending { it.value }.toList().indexOfFirst { it.key == category }
+            if (filteredCategorySpending.isNotEmpty()) {
+                items(filteredCategorySpending.entries.sortedByDescending { it.value }.toList()) { (category, amount) ->
+                    val index = filteredCategorySpending.entries.sortedByDescending { it.value }.toList().indexOfFirst { it.key == category }
                     val color = colors[index % colors.size]
                     val percentage = amount / totalSpending * 100
 
-                    // Get budget info for category
-                    val budget = categoryBudgets[category] ?: 0.0
+                    val budget = categoryBudgetsToUse[category] ?: 0.0
                     val isOverBudget = budget > 0 && amount > budget
                     val percentOfBudget = if (budget > 0) (amount / budget) * 100 else 0.0
 
@@ -382,7 +450,8 @@ fun AnalyticsScreen(
                             .fillMaxWidth()
                             .padding(vertical = 4.dp),
                         colors = CardDefaults.cardColors(
-                            containerColor = if (isOverBudget) Color(0xFFFFF3E0) else MaterialTheme.colorScheme.surface
+                            containerColor = if (isOverBudget) Color(0xFFFFF3E0) else MaterialTheme.colorScheme.surface,
+                            contentColor = if (isOverBudget) Color(0xFFFFF3E0) else MaterialTheme.colorScheme.surface
                         )
                     ) {
                         Column(
@@ -397,34 +466,36 @@ fun AnalyticsScreen(
                                 Box(
                                     modifier = Modifier
                                         .size(16.dp)
-                                        .background(color)
+                                        .background(color, CircleShape)
                                 )
 
                                 Spacer(modifier = Modifier.width(8.dp))
 
-                                Text(
-                                    text = category,
-                                    style = MaterialTheme.typography.bodyLarge,
-                                    fontWeight = FontWeight.Medium,
-                                    modifier = Modifier.weight(1f)
-                                )
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = category,
+                                        style = MaterialTheme.typography.titleMedium,
+                                        fontWeight = FontWeight.Bold,
+                                        color = if (isOverBudget) Color.Black else MaterialTheme.colorScheme.onSurface
 
-                                Text(
-                                    text = currencyFormat.format(amount),
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    fontWeight = FontWeight.Bold
-                                )
+                                    )
 
-                                Spacer(modifier = Modifier.width(8.dp))
+                                    Text(
+                                        text = "Spent: ${currencyFormat.format(amount)}",
+                                        style = MaterialTheme.typography.bodyLarge,
+                                        fontWeight = FontWeight.Medium,
+                                        color = if (isOverBudget) Color.Red else MaterialTheme.colorScheme.primary
+                                    )
+                                }
 
                                 Text(
                                     text = "(${String.format("%.1f", percentage)}%)",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = Color.Gray
+                                    style = MaterialTheme.typography.titleMedium,
+                                    fontWeight = FontWeight.Bold,
+                                    color = if (isOverBudget) Color.Black else MaterialTheme.colorScheme.primary
                                 )
                             }
 
-                            // Show budget comparison if budget is set
                             if (budget > 0) {
                                 Spacer(modifier = Modifier.height(4.dp))
 
@@ -435,17 +506,19 @@ fun AnalyticsScreen(
                                 ) {
                                     Text(
                                         text = "Budget: ${currencyFormat.format(budget)}",
-                                        style = MaterialTheme.typography.bodySmall
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        color = if (isOverBudget) Color.Black else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f)
                                     )
-
-                                    Text(
-                                        text = if (isOverBudget)
-                                            "${String.format("%.1f", percentOfBudget)}% of budget (${currencyFormat.format(amount - budget)} over)"
-                                        else
-                                            "${String.format("%.1f", percentOfBudget)}% of budget",
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = if (isOverBudget) Color.Red else Color.Gray
-                                    )
+                                    Column(horizontalAlignment = Alignment.End) {
+                                        Text(
+                                            text = if (isOverBudget)
+                                                "${String.format("%.1f", percentOfBudget)}% of budget (${currencyFormat.format(amount - budget)} over)"
+                                            else
+                                                "${String.format("%.1f", percentOfBudget)}% of budget",
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = if (isOverBudget) Color.Red else Color.Gray
+                                        )
+                                    }
                                 }
 
                                 Spacer(modifier = Modifier.height(4.dp))
@@ -459,22 +532,32 @@ fun AnalyticsScreen(
                                         percentOfBudget < 70 -> MaterialTheme.colorScheme.primary
                                         percentOfBudget < 90 -> Color(0xFFFFA000) // Amber
                                         else -> Color.Red
-                                    }
+                                    },
+                                    trackColor = MaterialTheme.colorScheme.surfaceVariant
+                                )
+                            }else{
+                                Spacer(modifier = Modifier.height(8.dp))
+
+                                Text(
+                                    text = "💡 Set a budget for this category to track progress",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+                                    modifier = Modifier.padding(4.dp)
                                 )
                             }
                         }
                     }
                 }
 
-                // Budget recommendations
                 item {
                     Spacer(modifier = Modifier.height(24.dp))
 
-                    if (overBudgetCategories.isNotEmpty() && monthlyBudget > 0) {
+                    if (overBudgetCategoriesFiltered.isNotEmpty() && budgetToUse > 0) {
                         Card(
                             modifier = Modifier.fillMaxWidth(),
                             colors = CardDefaults.cardColors(
-                                containerColor = Color(0xFFFFF3E0) // Light Orange
+                                containerColor = Color(0xFFFFF3E0),
+                                contentColor = Color(0xFFE65100)
                             )
                         ) {
                             Column(
@@ -490,20 +573,18 @@ fun AnalyticsScreen(
 
                                 Spacer(modifier = Modifier.height(8.dp))
 
-                                if (totalSpending > monthlyBudget) {
+                                if (totalSpending > budgetToUse) {
                                     Text(
-                                        text = "Your total spending exceeds your monthly budget by ${currencyFormat.format(totalSpending - monthlyBudget)}",
+                                        text = "Your total spending exceeds your monthly budget by ${currencyFormat.format(totalSpending - budgetToUse)}",
                                         style = MaterialTheme.typography.bodyMedium
                                     )
                                 }
 
                                 Spacer(modifier = Modifier.height(8.dp))
 
-                                // Show recommendations for over-budget categories
-                                overBudgetCategories.forEach { category ->
-                                    val analysis = categoryAnalysis[category]
-                                    val budget = analysis?.get("budget") ?: 0.0
-                                    val spent = analysis?.get("spent") ?: 0.0
+                                overBudgetCategoriesFiltered.forEach { category ->
+                                    val budget = categoryBudgetsToUse[category] ?: 0.0
+                                    val spent = filteredCategorySpending[category] ?: 0.0
 
                                     Text(
                                         text = "• Consider reducing spending on $category (${currencyFormat.format(spent - budget)} over budget)",

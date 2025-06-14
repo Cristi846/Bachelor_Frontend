@@ -14,20 +14,10 @@ import java.util.*
 import org.json.JSONArray
 import org.json.JSONObject
 
-/**
- * Utility class for exporting financial data to various formats
- */
 class DataExportUtil {
 
     companion object {
-        /**
-         * Export expenses to CSV format
-         *
-         * @param context The application context
-         * @param expenses List of expenses to export
-         * @param uri The URI of the file to save to (from document picker)
-         * @return Success message or error message
-         */
+
         fun exportToCSV(context: Context, expenses: List<ExpenseDto>, uri: Uri?): String {
             if (uri == null) {
                 return "No file location selected"
@@ -38,14 +28,11 @@ class DataExportUtil {
                 if (outputStream != null) {
                     val writer = OutputStreamWriter(outputStream)
 
-                    // Write the CSV header
                     writer.append("ID,USER_ID,AMOUNT,CATEGORY,DESCRIPTION,DATE,TIME,RECEIPT_IMAGE_URL\n")
 
-                    // Format the date and time
                     val dateFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd")
                     val timeFormatter = DateTimeFormatter.ofPattern("HH:mm:ss")
 
-                    // Write each expense as a CSV line
                     expenses.forEach { expense ->
                         writer.append(expense.id).append(",")
                         writer.append(expense.userId).append(",")
@@ -70,14 +57,6 @@ class DataExportUtil {
             }
         }
 
-        /**
-         * Export expenses to JSON format
-         *
-         * @param context The application context
-         * @param expenses List of expenses to export
-         * @param uri The URI of the file to save to (from document picker)
-         * @return Success message or error message
-         */
         fun exportToJSON(context: Context, expenses: List<ExpenseDto>, uri: Uri?): String {
             if (uri == null) {
                 return "No file location selected"
@@ -88,13 +67,10 @@ class DataExportUtil {
                 if (outputStream != null) {
                     val writer = OutputStreamWriter(outputStream)
 
-                    // Create a JSON array to hold all expenses
                     val jsonArray = JSONArray()
 
-                    // Format the date and time
                     val dateTimeFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss")
 
-                    // Convert each expense to a JSON object
                     expenses.forEach { expense ->
                         val jsonExpense = JSONObject().apply {
                             put("id", expense.id)
@@ -108,17 +84,14 @@ class DataExportUtil {
                         jsonArray.put(jsonExpense)
                     }
 
-                    // Create the root object containing the expenses array
                     val rootObject = JSONObject()
                     rootObject.put("expenses", jsonArray)
 
-                    // Add some metadata
                     rootObject.put("exportDate", SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss", Locale.getDefault())
                         .format(Date()))
                     rootObject.put("totalExpenses", expenses.size)
                     rootObject.put("totalAmount", expenses.sumOf { it.amount })
 
-                    // Write to file with pretty formatting
                     writer.write(rootObject.toString(4))
                     writer.flush()
                     writer.close()
@@ -133,12 +106,6 @@ class DataExportUtil {
             }
         }
 
-        /**
-         * Generate a default filename for the export
-         *
-         * @param format The file format (csv, json, pdf)
-         * @return A default filename with current date
-         */
         fun generateDefaultFilename(format: String): String {
             val dateFormat = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault())
             val dateStr = dateFormat.format(Date())

@@ -25,7 +25,6 @@ fun CategoryBudgetEditDialog(
     var budgetValue by remember { mutableStateOf(if (currentBudget > 0) currentBudget.toString() else "") }
     var showError by remember { mutableStateOf(false) }
 
-    // Format for currency display
     val currencyFormat = remember(currency) {
         NumberFormat.getCurrencyInstance().apply {
             this.currency = Currency.getInstance(currency)
@@ -52,7 +51,6 @@ fun CategoryBudgetEditDialog(
 
                 Spacer(modifier = Modifier.height(16.dp))
 
-                // Budget input field
                 OutlinedTextField(
                     value = budgetValue,
                     onValueChange = {
@@ -73,7 +71,6 @@ fun CategoryBudgetEditDialog(
 
                 Spacer(modifier = Modifier.height(16.dp))
 
-                // Current budget display
                 if (currentBudget > 0) {
                     Text(
                         text = "Current budget: ${currencyFormat.format(currentBudget)}",
@@ -83,7 +80,6 @@ fun CategoryBudgetEditDialog(
                     Spacer(modifier = Modifier.height(8.dp))
                 }
 
-                // Action buttons
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.End

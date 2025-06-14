@@ -34,25 +34,20 @@ fun AuthScreen(
     authViewModel: AuthViewModel,
     onSignInWithGoogle: () -> Unit
 ) {
-    // Observe auth UI state
     val authUiState by authViewModel.authUiState.collectAsState()
 
-    // Local UI state
     var isRegistering by rememberSaveable { mutableStateOf(false) }
     var showForgotPassword by rememberSaveable { mutableStateOf(false) }
 
-    // Form state
     var email by rememberSaveable { mutableStateOf("") }
     var password by rememberSaveable { mutableStateOf("") }
     var confirmPassword by rememberSaveable { mutableStateOf("") }
     var showPassword by rememberSaveable { mutableStateOf(false) }
 
-    // Error handling
     var emailError by rememberSaveable { mutableStateOf<String?>(null) }
     var passwordError by rememberSaveable { mutableStateOf<String?>(null) }
     var confirmPasswordError by rememberSaveable { mutableStateOf<String?>(null) }
 
-    // Validation functions
     fun validateEmail(): Boolean {
         return if (email.isEmpty()) {
             emailError = "Email cannot be empty"
@@ -89,19 +84,15 @@ fun AuthScreen(
         }
     }
 
-    // Handle form submission
     fun handleSubmit() {
-        // Reset errors
         emailError = null
         passwordError = null
         confirmPasswordError = null
 
-        // Validate fields
         val isEmailValid = validateEmail()
         val isPasswordValid = validatePassword()
         val isConfirmPasswordValid = if (isRegistering) validateConfirmPassword() else true
 
-        // If all fields are valid, proceed with authentication
         if (isEmailValid && isPasswordValid && isConfirmPasswordValid) {
             if (isRegistering) {
                 authViewModel.createAccountWithEmail(email, password)
@@ -111,7 +102,6 @@ fun AuthScreen(
         }
     }
 
-    // Handle forgot password
     fun handleForgotPassword() {
         val isEmailValid = validateEmail()
 
@@ -120,7 +110,6 @@ fun AuthScreen(
         }
     }
 
-    // Handle the UI based on authentication state
     Box(
         modifier = Modifier.fillMaxSize()
     ) {
@@ -131,14 +120,12 @@ fun AuthScreen(
                 .padding(24.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            // App logo/branding
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(vertical = 32.dp),
                 contentAlignment = Alignment.Center
             ) {
-                // Replace with your app logo
                 Icon(
                     imageVector = Icons.Default.AccountBalance,
                     contentDescription = "Finance Tracker Logo",
@@ -147,7 +134,6 @@ fun AuthScreen(
                 )
             }
 
-            // Title
             Text(
                 text = "Finance Tracker",
                 fontSize = 28.sp,
@@ -157,7 +143,6 @@ fun AuthScreen(
                 modifier = Modifier.padding(bottom = 8.dp)
             )
 
-            // Subtitle
             Text(
                 text = if (isRegistering) "Create your account" else "Sign in to your account",
                 fontSize = 16.sp,
@@ -166,7 +151,6 @@ fun AuthScreen(
                 modifier = Modifier.padding(bottom = 24.dp)
             )
 
-            // Error message
             if (authUiState is AuthUiState.Error) {
                 Card(
                     colors = CardDefaults.cardColors(
@@ -196,7 +180,6 @@ fun AuthScreen(
                 }
             }
 
-            // Password reset confirmation
             if (authUiState is AuthUiState.PasswordResetEmailSent) {
                 Card(
                     colors = CardDefaults.cardColors(
@@ -226,7 +209,6 @@ fun AuthScreen(
                 }
             }
 
-            // Forgot password form
             if (showForgotPassword) {
                 OutlinedTextField(
                     value = email,
@@ -269,7 +251,6 @@ fun AuthScreen(
                     Text("Back to Sign In")
                 }
             } else {
-                // Regular sign in / register form
                 OutlinedTextField(
                     value = email,
                     onValueChange = {
@@ -313,7 +294,6 @@ fun AuthScreen(
                         .padding(bottom = 16.dp)
                 )
 
-                // Confirm password field (only for registration)
                 if (isRegistering) {
                     OutlinedTextField(
                         value = confirmPassword,
@@ -342,7 +322,6 @@ fun AuthScreen(
                     )
                 }
 
-                // Sign in / Register button
                 Button(
                     onClick = { handleSubmit() },
                     modifier = Modifier
@@ -357,7 +336,6 @@ fun AuthScreen(
                     Text(if (isRegistering) "Create Account" else "Sign In")
                 }
 
-                // Forgot password link (only for sign in)
                 if (!isRegistering) {
                     TextButton(
                         onClick = {
@@ -370,7 +348,6 @@ fun AuthScreen(
                     }
                 }
 
-                // Divider with "or" text
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -386,7 +363,6 @@ fun AuthScreen(
                     Divider(modifier = Modifier.weight(1f))
                 }
 
-                // Google sign-in button
                 OutlinedButton(
                     onClick = { onSignInWithGoogle() },
                     modifier = Modifier
@@ -396,21 +372,19 @@ fun AuthScreen(
                         containerColor = Color.White
                     )
                 ) {
-                    // Replace with Google logo
                     Icon(
                         imageVector = Icons.Default.Public,
                         contentDescription = "Google Logo",
-                        tint = Color.Unspecified,
+                        tint = Color.Black,
                         modifier = Modifier.size(18.dp)
                     )
                     Spacer(modifier = Modifier.width(8.dp))
                     Text(
                         text = "Continue with Google",
-                        color = MaterialTheme.colorScheme.onSurface
+                        color = Color.Black
                     )
                 }
 
-                // Anonymous sign-in button
                 OutlinedButton(
                     onClick = { authViewModel.signInAnonymously() },
                     modifier = Modifier
@@ -425,7 +399,6 @@ fun AuthScreen(
                     Text("Continue as Guest")
                 }
 
-                // Toggle between sign in and register
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -449,7 +422,6 @@ fun AuthScreen(
             }
         }
 
-        // Loading indicator
         if (authUiState is AuthUiState.Loading) {
             Box(
                 modifier = Modifier

@@ -19,28 +19,39 @@ import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.viewmodel.compose.viewModel
+import com.example.bachelor_frontend.classes.BudgetType
 import com.example.bachelor_frontend.classes.ExpenseDto
+import com.example.bachelor_frontend.classes.FamilyDto
 import com.example.bachelor_frontend.network.ChatNetworkService
+import com.example.bachelor_frontend.service.GeminiAIService
 import com.example.bachelor_frontend.utils.ExpenseChatParser
+import com.example.bachelor_frontend.viewmodel.FamilyViewModel
 import kotlinx.coroutines.launch
 import java.text.NumberFormat
+import java.time.Instant
+import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.util.*
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun EnhancedExpenseChatScreen(
-    onExpenseCreated: (ExpenseDto) -> Unit,
+    onExpenseCreated: (ExpenseDto, BudgetType) -> Unit,
     onBack: () -> Unit,
     userId: String,
     userCurrency: String = "USD",
-    useBackend: Boolean = false // Toggle between local parsing and backend
+    useBackend: Boolean = false,
+    familyViewModel: FamilyViewModel = viewModel()
 ) {
     val localParser = remember { ExpenseChatParser() }
     val networkService = remember { ChatNetworkService() }
     val keyboardController = LocalSoftwareKeyboardController.current
     val coroutineScope = rememberCoroutineScope()
     val listState = rememberLazyListState()
+
+    val userFamily by familyViewModel.family.collectAsState()
+    var defaultBudgetType by remember { mutableStateOf(BudgetType.PERSONAL) }
 
     var messageText by remember { mutableStateOf("") }
     var isProcessing by remember { mutableStateOf(false) }
@@ -55,14 +66,12 @@ fun EnhancedExpenseChatScreen(
         ))
     }
 
-    // Currency formatter
     val currencyFormat = remember(userCurrency) {
         NumberFormat.getCurrencyInstance().apply {
             currency = Currency.getInstance(userCurrency)
         }
     }
 
-    // Auto-scroll to bottom when new messages are added
     LaunchedEffect(messages.size) {
         if (messages.isNotEmpty()) {
             coroutineScope.launch {
@@ -74,14 +83,12 @@ fun EnhancedExpenseChatScreen(
     fun handleUserMessage(messageText: String) {
         if (messageText.isBlank() || isProcessing) return
 
-        // Add user message immediately
         val userMessage = ChatMessage(
             content = messageText,
             isUser = true
         )
         messages = messages + userMessage
 
-        // Show typing indicator
         val typingMessage = ChatMessage(
             content = "🤔 Analyzing your message...",
             isUser = false,
@@ -99,14 +106,15 @@ fun EnhancedExpenseChatScreen(
                     handleMessageWithLocalParser(messageText, userId, userCurrency, localParser)
                 }
 
-                // Remove typing indicator and add actual response
                 messages = messages.dropLast(1) + responseMessage
 
-                // If an expense was created, save it
-                expense?.let { onExpenseCreated(it) }
+                expense?.let { val budgetType = determineBudgetTypeFromMessage(messageText, defaultBudgetType)
+                    onExpenseCreated(it.copy(
+                        budgetType = budgetType,
+                        familyId = if (budgetType == BudgetType.FAMILY) userFamily?.id else null
+                    ), budgetType)  }
 
             } catch (e: Exception) {
-                // Remove typing indicator and show error
                 val errorMessage = ChatMessage(
                     content = "Sorry, I encountered an error: ${e.message}\n\nPlease try again or rephrase your message.",
                     isUser = false
@@ -146,7 +154,6 @@ fun EnhancedExpenseChatScreen(
                     }
                 },
                 actions = {
-                    // Add test button
                     IconButton(
                         onClick = {
                             coroutineScope.launch {
@@ -185,13 +192,13 @@ fun EnhancedExpenseChatScreen(
                 )
             )
         },
+
         bottomBar = {
             Surface(
                 color = MaterialTheme.colorScheme.surface,
                 shadowElevation = 8.dp
             ) {
                 Column {
-                    // Show processing indicator
                     if (isProcessing) {
                         LinearProgressIndicator(
                             modifier = Modifier.fillMaxWidth(),
@@ -258,6 +265,40 @@ fun EnhancedExpenseChatScreen(
             }
         }
     ) { paddingValues ->
+            Column {
+                // Budget type selector bar
+                if (userFamily != null) {
+                    Surface(
+                        color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.3f),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 16.dp, vertical = 8.dp),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Text(
+                                text = "Default budget:",
+                                style = MaterialTheme.typography.labelMedium,
+                                modifier = Modifier.align(Alignment.CenterVertically)
+                            )
+
+                            FilterChip(
+                                selected = defaultBudgetType == BudgetType.PERSONAL,
+                                onClick = { defaultBudgetType = BudgetType.PERSONAL },
+                                label = { Text("Personal") }
+                            )
+
+                            FilterChip(
+                                selected = defaultBudgetType == BudgetType.FAMILY,
+                                onClick = { defaultBudgetType = BudgetType.FAMILY },
+                                label = { Text("Family") }
+                            )
+                        }
+                    }
+                }
+            }
         LazyColumn(
             state = listState,
             modifier = Modifier
@@ -272,9 +313,13 @@ fun EnhancedExpenseChatScreen(
                     message = message,
                     currencyFormat = currencyFormat,
                     onConfirmExpense = { expense ->
-                        onExpenseCreated(expense)
+                        onExpenseCreated(expense, defaultBudgetType)
                         messages = messages + ChatMessage(
-                            content = "✅ Expense added successfully!\n\n${currencyFormat.format(expense.amount)} spent on ${expense.category}",
+                            content = "✅ Expense added successfully!\n\n${
+                                currencyFormat.format(
+                                    expense.amount
+                                )
+                            } spent on ${expense.category}",
                             isUser = false
                         )
                     },
@@ -283,10 +328,25 @@ fun EnhancedExpenseChatScreen(
                     },
                     userId = userId,
                     userCurrency = userCurrency,
-                    localParser = localParser
+                    localParser = localParser,
+                    userFamily = userFamily,
+                    defaultBudgetType = defaultBudgetType
                 )
             }
         }
+    }
+}
+
+private fun determineBudgetTypeFromMessage(message: String, defaultType: BudgetType): BudgetType {
+    val lowerMessage = message.lowercase()
+    return when {
+        lowerMessage.contains("family") ||
+                lowerMessage.contains("shared") ||
+                lowerMessage.contains("together") -> BudgetType.FAMILY
+        lowerMessage.contains("personal") ||
+                lowerMessage.contains("my own") ||
+                lowerMessage.contains("private") -> BudgetType.PERSONAL
+        else -> defaultType
     }
 }
 
@@ -393,13 +453,14 @@ fun EnhancedChatMessageBubble(
     onSuggestionClick: (String) -> Unit,
     userId: String,
     userCurrency: String,
-    localParser: ExpenseChatParser
+    localParser: ExpenseChatParser,
+    userFamily: FamilyDto?,
+    defaultBudgetType: BudgetType
 ) {
     Column(
         modifier = Modifier.fillMaxWidth(),
         horizontalAlignment = if (message.isUser) Alignment.End else Alignment.Start
     ) {
-        // Message bubble
         Box(
             modifier = Modifier
                 .widthIn(max = 280.dp)
@@ -428,7 +489,6 @@ fun EnhancedChatMessageBubble(
             )
         }
 
-        // Network response confirmation
         if (!message.isUser && message.networkResponse != null && message.networkResponse.success) {
             Spacer(modifier = Modifier.height(8.dp))
 
@@ -459,19 +519,24 @@ fun EnhancedChatMessageBubble(
                         Spacer(modifier = Modifier.height(12.dp))
 
                         Button(
-                            onClick = { onConfirmExpense(expense) },
+                            onClick = {
+                                val budgetType = determineBudgetTypeFromMessage("", BudgetType.PERSONAL) // You can enhance this
+                                onConfirmExpense(expense.copy(
+                                    budgetType = budgetType,
+                                    familyId = if (budgetType == BudgetType.FAMILY) userFamily?.id else null
+                                ))
+                            },
                             modifier = Modifier.fillMaxWidth()
                         ) {
                             Icon(Icons.Default.Add, contentDescription = null)
                             Spacer(modifier = Modifier.width(4.dp))
-                            Text("Add Expense")
+                            Text("Add to ${if (defaultBudgetType == BudgetType.FAMILY) "Family" else "Personal"}")
                         }
                     }
                 }
             }
         }
 
-        // Local parser confirmation (same as before)
         if (!message.isUser && message.parsedExpense != null && message.parsedExpense.amount != null) {
             Spacer(modifier = Modifier.height(8.dp))
 
@@ -516,7 +581,6 @@ fun EnhancedChatMessageBubble(
             }
         }
 
-        // Suggestions (same as before)
         if (!message.isUser && message.suggestions.isNotEmpty()) {
             Spacer(modifier = Modifier.height(8.dp))
 
@@ -536,11 +600,10 @@ fun EnhancedChatMessageBubble(
             }
         }
 
-        // Timestamp
         Text(
             text = DateTimeFormatter.ofPattern("HH:mm").format(
-                java.time.Instant.ofEpochMilli(message.timestamp)
-                    .atZone(java.time.ZoneId.systemDefault())
+                Instant.ofEpochMilli(message.timestamp)
+                    .atZone(ZoneId.systemDefault())
                     .toLocalDateTime()
             ),
             style = MaterialTheme.typography.bodySmall,
@@ -554,7 +617,6 @@ fun EnhancedChatMessageBubble(
     }
 }
 
-// Updated ChatMessage data class to support network responses
 data class ChatMessage(
     val id: String = UUID.randomUUID().toString(),
     val content: String,
@@ -562,5 +624,7 @@ data class ChatMessage(
     val timestamp: Long = System.currentTimeMillis(),
     val parsedExpense: ExpenseChatParser.ParsedExpense? = null,
     val suggestions: List<String> = emptyList(),
-    val networkResponse: ChatNetworkService.ParseExpenseResponse? = null
+    val networkResponse: ChatNetworkService.ParseExpenseResponse? = null,
+    val expenseData: GeminiAIService.ExpenseData? = null,
+    val actionType: GeminiAIService.ActionType = GeminiAIService.ActionType.CONVERSATION
 )

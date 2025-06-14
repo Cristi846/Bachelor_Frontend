@@ -1,3 +1,12 @@
 <resources>
     <string name="app_name">FinanceTracker</string>
+    <string name="export_pdf_success">PDF report generated successfully</string>
+    <string name="export_csv_success">CSV data exported successfully</string>
+    <string name="export_email_success">Email app opened with report attached</string>
+    <string name="export_share_success">Report ready to share</string>
+    <string name="export_error">Export failed: %1$s</string>
+    <string name="export_no_data">No expense data found for the selected period</string>
+
+    <!-- File provider authority -->
+    <string name="file_provider_authority" translatable="false">${applicationId}.fileprovider</string>
 </resources>

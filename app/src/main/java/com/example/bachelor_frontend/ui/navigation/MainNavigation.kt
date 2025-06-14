@@ -16,12 +16,19 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
+import com.example.bachelor_frontend.classes.BudgetType
 import com.example.bachelor_frontend.classes.ExpenseDto
 import com.example.bachelor_frontend.repository.ExpenseRepository
 import com.example.bachelor_frontend.ui.compose.ReceiptScannerScreen
 import com.example.bachelor_frontend.ui.pages.*
+import com.example.bachelor_frontend.viewmodel.AuthViewModel
 import com.example.bachelor_frontend.viewmodel.ExpenseViewModel
+import com.example.bachelor_frontend.viewmodel.FamilyViewModel
 import com.example.bachelor_frontend.viewmodel.UserViewModel
+import com.example.bachelor_frontend.viewmodel.RecurringExpenseViewModel
+import androidx.navigation.navArgument
+import androidx.navigation.NavType
+
 
 sealed class Screen(
     val route: String,
@@ -34,12 +41,16 @@ sealed class Screen(
     data object Profile : Screen("profile", "Profile", Icons.Filled.Person, Icons.Outlined.Person)
     data object Settings : Screen("settings", "Settings", Icons.Filled.Settings, Icons.Outlined.Settings)
 
-    // These screens are not in the bottom navigation
-    data object AddExpense : Screen("add_expense", "Add Expense", Icons.Filled.Add, Icons.Outlined.Add)
+    data object AddExpense : Screen("add_expense?budgetType=PERSONAL", "Add Expense", Icons.Filled.Add, Icons.Outlined.Add)
     data object EditExpense : Screen("edit_expense/{expenseId}", "Edit Expense", Icons.Filled.Edit, Icons.Outlined.Edit)
     data object ReceiptScanner : Screen("receipt_scanner", "Receipt Scanner", Icons.Filled.QrCodeScanner, Icons.Outlined.QrCodeScanner)
     data object CategoryBudgets : Screen("category_budgets", "Category Budgets", Icons.Filled.AccountBalance, Icons.Outlined.AccountBalance)
     data object ExpenseChat : Screen("expense_chat", "Expense Chat", Icons.Filled.Chat, Icons.Outlined.Chat)
+    data object EnhancedAIChat : Screen("enhanced_ai_chat", "Enhanced AI Chat", Icons.Filled.Psychology, Icons.Outlined.Psychology)
+
+    data object CreateFamily : Screen("create_family", "Create Family", Icons.Filled.GroupAdd, Icons.Outlined.GroupAdd)
+    data object FamilyBudget : Screen("family_budget", "Family Budget", Icons.Filled.AccountBalance, Icons.Outlined.AccountBalance)
+    data object FamilyExpenses : Screen("family_expenses", "Family Expenses", Icons.Filled.Receipt, Icons.Outlined.Receipt)
 
     data object SmartReceiptAnalysis : Screen("smart_receipt_analysis", "Smart Receipt Analysis", Icons.Filled.InsertChart, Icons.Outlined.InsertChart)
 }
@@ -49,6 +60,9 @@ sealed class Screen(
 fun MainNavigation(
     expenseViewModel: ExpenseViewModel,
     userViewModel: UserViewModel,
+    authViewModel: AuthViewModel,
+    familyViewModel: FamilyViewModel,
+    recurringExpenseViewModel: RecurringExpenseViewModel,
     userId: String,
     onSignOut: () -> Unit
 ) {
@@ -56,6 +70,22 @@ fun MainNavigation(
     val expenses by expenseViewModel.expenses.collectAsState()
     val monthlyBudget by expenseViewModel.monthlyBudget.collectAsState()
     val categories by expenseViewModel.categories.collectAsState()
+
+    val userCurrency by userViewModel.currency.collectAsState()
+    val categorySpending by expenseViewModel.categorySpending.collectAsState()
+
+    // Create a callback to handle family expense addition
+    val handleFamilyExpenseAdded = { expense: ExpenseDto, budgetType: BudgetType ->
+        expenseViewModel.addExpense(expense, budgetType)
+        // Refresh family data after adding family expense
+        if (budgetType == BudgetType.FAMILY) {
+            familyViewModel.refreshAfterExpenseAdded()
+        }
+        navController.popBackStack()
+    }
+
+    val familyViewModel: FamilyViewModel = viewModel()
+    val recurringExpenseViewModel: RecurringExpenseViewModel = viewModel()
 
     val bottomNavItems = listOf(
         Screen.Home,
@@ -120,7 +150,23 @@ fun MainNavigation(
             composable(Screen.Profile.route) {
                 ProfileScreen(
                     userViewModel = userViewModel,
-                    onSignOut = onSignOut
+                    familyViewModel = familyViewModel,
+                    expenseViewModel = expenseViewModel,
+                    authViewModel = authViewModel,
+                    recurringExpenseViewModel = recurringExpenseViewModel,
+                    onSignOut = onSignOut,
+                    onNavigateToCreateFamily = {
+                        navController.navigate(Screen.CreateFamily.route)
+                    },
+                    onNavigateToFamilyManagement = {
+                        navController.navigate("family_management") // Add this route
+                    },
+                    onNavigateToFamilyBudget = {
+                        navController.navigate(Screen.FamilyBudget.route)
+                    },
+                    onNavigateToFamilyExpenses = {
+                        navController.navigate(Screen.FamilyExpenses.route)
+                    }
                 )
             }
 
@@ -134,12 +180,31 @@ fun MainNavigation(
                 )
             }
 
-            composable(Screen.AddExpense.route) {
+            composable(
+                route = "add_expense?budgetType={budgetType}",
+                arguments = listOf(
+                    navArgument("budgetType") {
+                        type = NavType.StringType
+                        defaultValue = "PERSONAL"
+                    }
+                )
+            ) { backStackEntry ->
+                val budgetTypeString = backStackEntry.arguments?.getString("budgetType") ?: "PERSONAL"
+                val initialBudgetType = try {
+                    BudgetType.valueOf(budgetTypeString)
+                } catch (e: Exception) {
+                    BudgetType.PERSONAL
+                }
+
                 AddExpenseScreen(
                     categories = categories,
                     userId = userId,
-                    onSaveExpense = { expense ->
-                        expenseViewModel.addExpense(expense)
+                    onSaveExpense = { expense, budgetType ->
+                        expenseViewModel.addExpense(expense, budgetType)
+                        // Refresh family data if it's a family expense
+                        if (budgetType == BudgetType.FAMILY) {
+                            familyViewModel.refreshAfterExpenseAdded()
+                        }
                         navController.popBackStack()
                     },
                     onCancel = {
@@ -147,6 +212,20 @@ fun MainNavigation(
                     },
                     onScanReceipt = {
                         navController.navigate(Screen.ReceiptScanner.route)
+                    },
+                    familyViewModel = familyViewModel,
+                    initialExpense = null,
+                    initialBudgetType = initialBudgetType
+                )
+            }
+
+            // Family Expenses screen
+            composable(Screen.FamilyExpenses.route) {
+                FamilyExpensesScreen(
+                    familyViewModel = familyViewModel,
+                    expenseViewModel = expenseViewModel,
+                    onNavigateToAddExpense = {
+                        navController.navigate("add_expense?budgetType=FAMILY")
                     }
                 )
             }
@@ -160,8 +239,8 @@ fun MainNavigation(
                         categories = categories,
                         userId = userId,
                         initialExpense = expense,
-                        onSaveExpense = { updatedExpense ->
-                            expenseViewModel.addExpense(updatedExpense)
+                        onSaveExpense = { updatedExpense, budgetType ->
+                            expenseViewModel.addExpense(updatedExpense, budgetType)
                             navController.popBackStack()
                         },
                         onCancel = {
@@ -169,28 +248,28 @@ fun MainNavigation(
                         },
                         onScanReceipt = {
                             navController.navigate(Screen.ReceiptScanner.route)
-                        }
+                        },
+                        familyViewModel = familyViewModel
                     )
                 } else {
                     navController.popBackStack()
                 }
             }
 
-            // Receipt scanner screen
             composable(Screen.ReceiptScanner.route) {
                 ReceiptScannerScreen(
-                    onCaptureSuccess = { expenseFromReceipt ->
+                    onCaptureSuccess = { expenseFromReceipt, budgetType ->
                         // Add the expense created from the receipt scan
-                        expenseViewModel.addExpense(expenseFromReceipt.copy(userId = userId))
+                        expenseViewModel.addExpense(expenseFromReceipt.copy(userId = userId), budgetType)
                         navController.popBackStack()
                     },
                     onCancel = {
                         navController.popBackStack()
-                    }
+                    },
+                    familyViewModel = familyViewModel
                 )
             }
 
-            // Category Budget screen
             composable(Screen.CategoryBudgets.route) {
                 CategoryBudgetScreen(
                     userViewModel = userViewModel,
@@ -199,14 +278,13 @@ fun MainNavigation(
                 )
             }
 
-            // Home screen - FIXED
             composable(Screen.Home.route) {
                 HomeScreen(
                     expenses = expenses,
                     monthlyBudget = monthlyBudget,
                     onAddExpenseClick = {
                         selectedExpense = null
-                        navController.navigate(Screen.AddExpense.route)
+                        navController.navigate("add_expense?budgetType=PERSONAL")
                     },
                     onExpenseClick = { expense ->
                         selectedExpense = expense
@@ -216,16 +294,16 @@ fun MainNavigation(
                         navController.navigate(Screen.ReceiptScanner.route)
                     },
                     onChatExpenseClick = {
-                        navController.navigate(Screen.ExpenseChat.route)
-                    }
+                        navController.navigate(Screen.EnhancedAIChat.route)
+                    },
+                    familyViewModel = familyViewModel
                 )
             }
 
-            // Chat screen - AI-powered
             composable(Screen.ExpenseChat.route) {
                 EnhancedExpenseChatScreen(
-                    onExpenseCreated = { expense ->
-                        expenseViewModel.addExpense(expense.copy(userId = userId))
+                    onExpenseCreated = { expense, budgetType ->
+                        expenseViewModel.addExpense(expense.copy(userId = userId), budgetType)
                         navController.popBackStack()
                     },
                     onBack = {
@@ -233,7 +311,74 @@ fun MainNavigation(
                     },
                     userId = userId,
                     userCurrency = userViewModel.currency.collectAsState().value,
-                    useBackend = false // Enable AI backend
+                    useBackend = false,
+                    familyViewModel = familyViewModel
+                )
+            }
+
+            composable(Screen.EnhancedAIChat.route) {
+                EnhancedAIChatScreen(
+                    onExpenseCreated = { expense, budgetType ->
+                        expenseViewModel.addExpense(expense.copy(userId = userId), budgetType)
+                        // Don't navigate back automatically - let user continue chatting
+                    },
+                    onBack = {
+                        navController.popBackStack()
+                    },
+                    userId = userId,
+                    userCurrency = userCurrency,
+                    categories = categories,
+                    monthlyBudget = monthlyBudget,
+                    currentSpending = categorySpending.values.sum(),
+                    recentExpenses = expenses.take(10), // Pass recent expenses for context
+                    familyViewModel = familyViewModel
+                )
+            }
+
+            // Create Family screen
+            composable(Screen.CreateFamily.route) {
+                CreateFamilyScreen(
+                    familyViewModel = familyViewModel,
+                    onFamilyCreated = {
+                        navController.popBackStack()
+                    },
+                    onBack = {
+                        navController.popBackStack()
+                    }
+                )
+            }
+
+            // Family Budget screen
+            composable(Screen.FamilyBudget.route) {
+                FamilyBudgetScreen(
+                    familyViewModel = familyViewModel,
+                    userViewModel = userViewModel
+                )
+            }
+
+            // Family Expenses screen
+            composable(Screen.FamilyExpenses.route) {
+                FamilyExpensesScreen(
+                    familyViewModel = familyViewModel,
+                    expenseViewModel = expenseViewModel,
+                    onNavigateToAddExpense = {
+                        navController.navigate(Screen.AddExpense.route)
+                    }
+                )
+            }
+
+            composable("family_management") {
+                FamilyManagementScreen(
+                    familyViewModel = familyViewModel,
+                    onNavigateToCreateFamily = {
+                        navController.navigate(Screen.CreateFamily.route)
+                    },
+                    onNavigateToFamilyBudget = {
+                        navController.navigate(Screen.FamilyBudget.route)
+                    },
+                    onNavigateToFamilyExpenses = {
+                        navController.navigate(Screen.FamilyExpenses.route)
+                    }
                 )
             }
         }

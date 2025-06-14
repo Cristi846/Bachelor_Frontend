@@ -34,12 +34,18 @@ import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.auth.ktx.auth
 import com.google.firebase.ktx.Firebase
 import androidx.compose.runtime.LaunchedEffect
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.ViewModelProvider
 import com.example.bachelor_frontend.ui.pages.EnhancedExpenseChatScreen
 import com.example.bachelor_frontend.utils.ExpenseChatParser
+import com.example.bachelor_frontend.viewmodel.FamilyViewModel
+import com.example.bachelor_frontend.viewmodel.RecurringExpenseViewModel
 
 class MainActivity : ComponentActivity() {
     private val expenseViewModel: ExpenseViewModel by viewModels()
     private val userViewModel: UserViewModel by viewModels()
+    private val familyViewModel: FamilyViewModel by viewModels() // Add Family ViewModel
+    private val recurringExpenseViewModel: RecurringExpenseViewModel by viewModels()
     private lateinit var auth: FirebaseAuth
     private lateinit var googleSignInHelper: GoogleSignInHelper
 
@@ -85,6 +91,8 @@ class MainActivity : ComponentActivity() {
                         authViewModel = authViewModel,
                         userViewModel = userViewModel,
                         expenseViewModel = expenseViewModel,
+                        familyViewModel = familyViewModel, // Pass Family ViewModel
+                        recurringExpenseViewModel = recurringExpenseViewModel,
                         onSignOut = {
                             authViewModel.signOut()
                             googleSignInHelper.signOut()
@@ -101,24 +109,24 @@ class MainActivity : ComponentActivity() {
 fun AuthenticationHandler(
     authViewModel: AuthViewModel,
     userViewModel: UserViewModel,
-    expenseViewModel: ExpenseViewModel,
+    expenseViewModel: ExpenseViewModel = viewModel(),
+    familyViewModel: FamilyViewModel= viewModel(),
+    recurringExpenseViewModel: RecurringExpenseViewModel,
     googleSignInHelper: GoogleSignInHelper,
     onSignOut: () -> Unit
 ) {
     val authUiState by authViewModel.authUiState.collectAsState()
 
-    // Handle Google Sign-In
+
     val signInLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.StartActivityForResult()
     ) { result ->
-        // Handle the result in the ViewModel
         val task = GoogleSignIn.getSignedInAccountFromIntent(result.data)
         authViewModel.handleGoogleSignInResult(task)
     }
 
     when (authUiState) {
         is AuthUiState.Initializing -> {
-            // Show loading while initializing
             Box(
                 modifier = Modifier.fillMaxSize(),
                 contentAlignment = Alignment.Center
@@ -127,17 +135,14 @@ fun AuthenticationHandler(
             }
         }
         is AuthUiState.Unauthenticated, is AuthUiState.Error, is AuthUiState.PasswordResetEmailSent -> {
-            // Show the authentication screen
             AuthScreen(
                 authViewModel = authViewModel,
                 onSignInWithGoogle = {
-                    // Launch the Google Sign-In flow
                     signInLauncher.launch(googleSignInHelper.getSignInIntent())
                 }
             )
         }
         is AuthUiState.Loading -> {
-            // Show loading while authentication is in progress
             Box(
                 modifier = Modifier.fillMaxSize(),
                 contentAlignment = Alignment.Center
@@ -146,20 +151,22 @@ fun AuthenticationHandler(
             }
         }
         is AuthUiState.Authenticated -> {
-            // User is authenticated, show the main app
             val user = (authUiState as AuthUiState.Authenticated).user
 
-            // Load user data
             LaunchedEffect(user.uid) {
                 userViewModel.loadUserData()
                 expenseViewModel.loadUserData(user.uid)
                 expenseViewModel.loadExpenses(user.uid)
+                familyViewModel.loadUserFamily()
+                recurringExpenseViewModel.loadRecurringExpenses(user.uid)
             }
 
-            // Show the main app UI
             MainNavigation(
                 expenseViewModel = expenseViewModel,
                 userViewModel = userViewModel,
+                authViewModel = authViewModel,
+                familyViewModel = familyViewModel,
+                recurringExpenseViewModel = recurringExpenseViewModel,
                 userId = user.uid,
                 onSignOut = onSignOut
             )

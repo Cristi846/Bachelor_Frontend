@@ -25,18 +25,15 @@ fun BudgetDistributionDialog(
 ) {
     var distributionMethod by remember { mutableStateOf(DistributionMethod.EQUAL) }
 
-    // Currency formatter
     val currencyFormat = remember(currency) {
         NumberFormat.getCurrencyInstance().apply {
             this.currency = Currency.getInstance(currency)
         }
     }
 
-    // Calculate distributions
     val equalDistribution = calculateEqualDistribution(categories, totalBudget)
     val spendingBasedDistribution = calculateSpendingBasedDistribution(categories, totalBudget, categorySpending)
 
-    // Selected distribution
     val selectedDistribution = when (distributionMethod) {
         DistributionMethod.EQUAL -> equalDistribution
         DistributionMethod.SPENDING_BASED -> spendingBasedDistribution
@@ -89,7 +86,6 @@ fun BudgetDistributionDialog(
 
                 Spacer(modifier = Modifier.height(16.dp))
 
-                // Distribution method selector
                 Text(
                     text = "Distribution Method",
                     style = MaterialTheme.typography.labelMedium
@@ -116,7 +112,6 @@ fun BudgetDistributionDialog(
 
                 Spacer(modifier = Modifier.height(16.dp))
 
-                // Show distribution preview
                 Column(modifier = Modifier.fillMaxWidth()) {
                     Text(
                         text = "Preview",
@@ -149,7 +144,6 @@ fun BudgetDistributionDialog(
 
                 Spacer(modifier = Modifier.height(16.dp))
 
-                // Help text for distribution method
                 when (distributionMethod) {
                     DistributionMethod.EQUAL -> {
                         Text(
@@ -167,7 +161,6 @@ fun BudgetDistributionDialog(
 
                 Spacer(modifier = Modifier.height(16.dp))
 
-                // Action buttons
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.End
@@ -194,13 +187,11 @@ fun BudgetDistributionDialog(
     }
 }
 
-// Distribution methods
 enum class DistributionMethod {
     EQUAL,
     SPENDING_BASED
 }
 
-// Helper functions to calculate distributions
 private fun calculateEqualDistribution(
     categories: List<String>,
     totalBudget: Double
@@ -226,17 +217,14 @@ private fun calculateSpendingBasedDistribution(
     val distribution = mutableMapOf<String, Double>()
     val totalSpent = categorySpending.values.sum().takeIf { it > 0 } ?: 1.0
 
-    // Allocate based on percentage of spending
     categories.forEach { category ->
         val spent = categorySpending[category] ?: 0.0
         val percentage = spent / totalSpent
         val budget = totalBudget * percentage
 
-        // Ensure every category gets at least some budget
         distribution[category] = if (spent > 0) budget else totalBudget * 0.01
     }
 
-    // Adjust to match total budget exactly
     val sum = distribution.values.sum()
     if (sum > 0 && sum != totalBudget) {
         val factor = totalBudget / sum

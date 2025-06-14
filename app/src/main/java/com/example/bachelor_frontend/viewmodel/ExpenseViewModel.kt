@@ -1,9 +1,12 @@
 package com.example.bachelor_frontend.viewmodel
 
+import android.app.Application
 import android.util.Log
-import androidx.lifecycle.ViewModel
+import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.example.bachelor_frontend.classes.BudgetType
 import com.example.bachelor_frontend.classes.ExpenseDto
+import com.example.bachelor_frontend.service.BudgetMonitorService
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.Query
 import com.google.firebase.auth.FirebaseAuth
@@ -21,9 +24,12 @@ import java.time.YearMonth
 import java.time.ZoneId
 import java.util.*
 
-class ExpenseViewModel : ViewModel() {
+class ExpenseViewModel(application: Application) : AndroidViewModel(application) {
     private val db = FirebaseFirestore.getInstance()
     private val auth = FirebaseAuth.getInstance()
+
+    // Budget monitor service with access to application context
+    private val budgetMonitorService = BudgetMonitorService(getApplication())
 
     // State flows for existing functionality
     private val _expenses = MutableStateFlow<List<ExpenseDto>>(emptyList())
@@ -69,6 +75,9 @@ class ExpenseViewModel : ViewModel() {
 
     private var userViewModel: UserViewModel? = null
 
+    // Current currency for notifications
+    private var currentCurrency: String = "USD"
+
     init {
         // Initialize default values
         loadDefaultCategories()
@@ -85,6 +94,13 @@ class ExpenseViewModel : ViewModel() {
      */
     fun connectToUserViewModel(viewModel: UserViewModel) {
         userViewModel = viewModel
+
+        // Observe currency changes
+        viewModelScope.launch {
+            viewModel.currency.collectLatest { currency ->
+                currentCurrency = currency
+            }
+        }
 
         // Observe changes from UserViewModel
         viewModelScope.launch {
@@ -165,6 +181,9 @@ class ExpenseViewModel : ViewModel() {
                         // If category budgets don't exist, initialize with zeros
                         _categoryBudgets.value = _categories.value.associateWith { 0.0 }
                     }
+
+                    // Update current currency
+                    currentCurrency = userDocument.getString("currency") ?: "USD"
                 }
 
                 _error.value = null
@@ -246,36 +265,89 @@ class ExpenseViewModel : ViewModel() {
         }
     }
 
-    fun addExpense(expense: ExpenseDto) {
+    fun addExpense(expense: ExpenseDto, budgetType: BudgetType = BudgetType.PERSONAL) {
         viewModelScope.launch {
             try {
                 _loading.value = true
 
-                // Prepare data for Firestore
-                val expenseData = hashMapOf(
-                    "userId" to expense.userId,
-                    "amount" to expense.amount,
-                    "category" to expense.category,
-                    "description" to expense.description,
-                    "timestamp" to Date.from(
-                        expense.timestamp.atZone(ZoneId.systemDefault()).toInstant()
-                    ),
-                    "receiptImageUrl" to expense.receiptImageUrl
+                val finalExpense = expense.copy(
+                    budgetType = budgetType,
+                    familyId = if (budgetType == BudgetType.FAMILY) {
+                        // Make sure we have a family ID for family expenses
+                        expense.familyId ?: run {
+                            Log.e("ExpenseViewModel", "No family ID provided for family expense!")
+                            _error.value = "Cannot add family expense: No family selected"
+                            return@launch
+                        }
+                    } else {
+                        null // Personal expenses don't need family ID
+                    }
                 )
 
+                Log.d("ExpenseViewModel", "Adding expense: $finalExpense")
+                Log.d("ExpenseViewModel", "Budget type: $budgetType")
+                Log.d("ExpenseViewModel", "Family ID: ${finalExpense.familyId}")
+
+                // Prepare data for Firestore
+                val expenseData = hashMapOf(
+                    "userId" to finalExpense.userId,
+                    "amount" to finalExpense.amount,
+                    "category" to finalExpense.category,
+                    "description" to finalExpense.description,
+                    "timestamp" to Date.from(
+                        finalExpense.timestamp.atZone(ZoneId.systemDefault()).toInstant()
+                    ),
+                    "receiptImageUrl" to finalExpense.receiptImageUrl,
+                    "budgetType" to finalExpense.budgetType.name,
+                    "familyId" to finalExpense.familyId
+                )
+
+                Log.d("ExpenseViewModel", "Firestore data: $expenseData")
+
                 // Add to Firestore
-                withContext(Dispatchers.IO) {
-                    if (expense.id.isBlank()) {
+                val documentId = withContext(Dispatchers.IO) {
+                    if (finalExpense.id.isBlank()) {
                         // Create new expense
-                        db.collection("expenses").add(expenseData).await()
+                        val docRef = db.collection("expenses").add(expenseData).await()
+                        Log.d("ExpenseViewModel", "Created expense with ID: ${docRef.id}")
+                        docRef.id
                     } else {
                         // Update existing expense
-                        db.collection("expenses").document(expense.id).set(expenseData).await()
+                        db.collection("expenses").document(finalExpense.id).set(expenseData).await()
+                        Log.d("ExpenseViewModel", "Updated expense with ID: ${finalExpense.id}")
+                        finalExpense.id
                     }
                 }
 
-                // Reload expenses
-                loadExpenses(expense.userId)
+                withContext(Dispatchers.IO) {
+                    try {
+                        val savedDoc = db.collection("expenses").document(documentId).get().await()
+                        if (savedDoc.exists()) {
+                            Log.d("ExpenseViewModel", "Verified saved expense:")
+                            Log.d("ExpenseViewModel", "  - ID: ${savedDoc.id}")
+                            Log.d("ExpenseViewModel", "  - Budget Type: ${savedDoc.getString("budgetType")}")
+                            Log.d("ExpenseViewModel", "  - Family ID: ${savedDoc.getString("familyId")}")
+                            Log.d("ExpenseViewModel", "  - User ID: ${savedDoc.getString("userId")}")
+                            Log.d("ExpenseViewModel", "  - Amount: ${savedDoc.getDouble("amount")}")
+                        } else {
+                            Log.e("ExpenseViewModel", "Failed to verify saved expense!")
+                        }
+                    } catch (e: Exception) {
+                        Log.e("ExpenseViewModel", "Error verifying saved expense", e)
+                    }
+                }
+
+                // Reload expenses to get updated data
+                loadExpenses(finalExpense.userId)
+
+                if (budgetType == BudgetType.FAMILY && finalExpense.familyId != null) {
+                    // Notify that family data should be refreshed
+                    Log.d("ExpenseViewModel", "Triggering family data refresh")
+                    // You might want to add a callback here to refresh family data
+                }
+
+                // Check budget after adding expense (after reload to have current data)
+                checkBudgetAfterExpense(finalExpense, budgetType)
 
                 _error.value = null
             } catch (e: Exception) {
@@ -286,6 +358,151 @@ class ExpenseViewModel : ViewModel() {
             }
         }
     }
+
+    /**
+     * Check budget after expense and trigger notifications
+     */
+    private fun checkBudgetAfterExpense(expense: ExpenseDto, budgetType: BudgetType = BudgetType.PERSONAL) {
+        viewModelScope.launch {
+            try {
+                // Show expense confirmation notification
+                budgetMonitorService.showExpenseConfirmation(
+                    amount = expense.amount,
+                    category = expense.category,
+                    currency = currentCurrency
+                )
+
+                if (budgetType == BudgetType.FAMILY) {
+                    checkFamilyBudgetAfterExpense(expense)
+                } else {
+                    // Existing personal budget logic
+                    val totalSpending = _categorySpending.value.values.sum()
+                    val monthlyBudget = _monthlyBudget.value
+
+                    if (monthlyBudget > 0) {
+                        budgetMonitorService.checkMonthlyBudgetAndNotify(
+                            totalSpending = totalSpending,
+                            monthlyBudget = monthlyBudget,
+                            currency = currentCurrency
+                        )
+                    }
+                }
+
+                // Check monthly budget
+                val totalSpending = _categorySpending.value.values.sum()
+                val monthlyBudget = _monthlyBudget.value
+
+                if (monthlyBudget > 0) {
+                    budgetMonitorService.checkMonthlyBudgetAndNotify(
+                        totalSpending = totalSpending,
+                        monthlyBudget = monthlyBudget,
+                        currency = currentCurrency
+                    )
+                }
+
+                // Check category budgets
+                budgetMonitorService.checkCategoryBudgetAndNotify(
+                    categorySpending = _categorySpending.value,
+                    categoryBudgets = _categoryBudgets.value,
+                    currency = currentCurrency
+                )
+
+            } catch (e: Exception) {
+                Log.e("ExpenseViewModel", "Error checking budget notifications", e)
+            }
+        }
+    }
+
+    private fun checkFamilyBudgetAfterExpense(expense: ExpenseDto) {
+        viewModelScope.launch {
+            try {
+                if (expense.familyId == null) {
+                    Log.w("ExpenseViewModel", "No family ID for family expense")
+                    return@launch
+                }
+
+                // Get family data from Firestore
+                val familyDoc = withContext(Dispatchers.IO) {
+                    db.collection("families").document(expense.familyId!!).get().await()
+                }
+
+                if (!familyDoc.exists()) {
+                    Log.w("ExpenseViewModel", "Family document not found: ${expense.familyId}")
+                    return@launch
+                }
+
+                // Parse family budget data
+                val sharedBudgetMap = familyDoc.get("sharedBudget") as? Map<String, Any> ?: return@launch
+                val monthlyBudget = (sharedBudgetMap["monthlyBudget"] as? Number)?.toDouble() ?: 0.0
+                val currency = sharedBudgetMap["currency"] as? String ?: currentCurrency
+
+                @Suppress("UNCHECKED_CAST")
+                val categoryBudgets = (sharedBudgetMap["categoryBudgets"] as? Map<String, Number>)?.mapValues {
+                    it.value.toDouble()
+                } ?: emptyMap()
+
+                // Get all family expenses to calculate current spending
+                var totalFamilySpending = 0.0
+                val categorySpending = mutableMapOf<String, Double>()
+
+                // Calculate family spending from all members for current month
+                val currentMonth = LocalDateTime.now().month
+                val currentYear = LocalDateTime.now().year
+
+                val familyExpenses = withContext(Dispatchers.IO) {
+                    db.collection("expenses")
+                        .whereEqualTo("budgetType", BudgetType.FAMILY.name)
+                        .whereEqualTo("familyId", expense.familyId)
+                        .get()
+                        .await()
+                }
+
+                familyExpenses.documents.forEach { doc ->
+                    try {
+                        val amount = doc.getDouble("amount") ?: 0.0
+                        val category = doc.getString("category") ?: "Other"
+                        val timestamp = doc.getTimestamp("timestamp")?.toDate()?.toInstant()
+                            ?.atZone(ZoneId.systemDefault())?.toLocalDateTime()
+
+                        // Only count current month expenses
+                        if (timestamp != null &&
+                            timestamp.month == currentMonth &&
+                            timestamp.year == currentYear) {
+                            totalFamilySpending += amount
+                            categorySpending[category] = (categorySpending[category] ?: 0.0) + amount
+                        }
+                    } catch (e: Exception) {
+                        Log.e("ExpenseViewModel", "Error processing family expense doc", e)
+                    }
+                }
+
+                Log.d("ExpenseViewModel", "Family budget check - Total: $totalFamilySpending, Budget: $monthlyBudget")
+
+                // Check family monthly budget
+                if (monthlyBudget > 0) {
+                    budgetMonitorService.checkMonthlyBudgetAndNotify(
+                        totalSpending = totalFamilySpending,
+                        monthlyBudget = monthlyBudget,
+                        currency = currency
+                    )
+                }
+
+                // Check family category budgets
+                if (categoryBudgets.isNotEmpty()) {
+                    budgetMonitorService.checkCategoryBudgetAndNotify(
+                        categorySpending = categorySpending,
+                        categoryBudgets = categoryBudgets,
+                        currency = currency
+                    )
+                }
+
+            } catch (e: Exception) {
+                Log.e("ExpenseViewModel", "Error checking family budget notifications", e)
+            }
+        }
+    }
+
+
 
     fun deleteExpense(expenseId: String, userId: String) {
         viewModelScope.launch {
@@ -604,84 +821,6 @@ class ExpenseViewModel : ViewModel() {
                 _loading.value = false
             }
         }
-    }
-
-    private fun analyzeCategory(expenses: List<ExpenseDto>): Map<String, Any> {
-        val categoryExpenses = expenses.groupBy { it.category }
-        val analysis = mutableMapOf<String, Any>()
-
-        categoryExpenses.forEach { (category, categoryExpenseList) ->
-            val totalAmount = categoryExpenseList.sumOf { it.amount }
-            val averageAmount = totalAmount / categoryExpenseList.size
-            val transactionCount = categoryExpenseList.size
-            val lastTransaction = categoryExpenseList.maxByOrNull { it.timestamp }
-
-            // Monthly trends analysis
-            val monthlySpending = categoryExpenseList
-                .groupBy { YearMonth.of(it.timestamp.year, it.timestamp.month) }
-                .mapValues { (_, expenses) -> expenses.sumOf { it.amount } }
-                .toSortedMap()
-
-            // Calculate trend (increasing/decreasing spending)
-            val trend = if (monthlySpending.size >= 2) {
-                val values = monthlySpending.values.toList()
-                val recent = values.takeLast(3).average()
-                val older = values.dropLast(3).takeIf { it.isNotEmpty() }?.average() ?: recent
-
-                when {
-                    recent > older * 1.1 -> "increasing"
-                    recent < older * 0.9 -> "decreasing"
-                    else -> "stable"
-                }
-            } else {
-                "insufficient_data"
-            }
-
-            analysis[category] = mapOf(
-                "totalAmount" to totalAmount,
-                "averageAmount" to averageAmount,
-                "transactionCount" to transactionCount,
-                "lastTransaction" to lastTransaction?.timestamp,
-                "monthlyTrend" to trend,
-                "monthlySpending" to monthlySpending
-            )
-        }
-
-        return analysis
-    }
-
-    /**
-     * Generate seasonal spending patterns
-     */
-    private fun analyzeSeasonalPattern(expenses: List<ExpenseDto>): Map<String, Double> {
-        val seasonalSpending = mutableMapOf(
-            "Spring" to 0.0,
-            "Summer" to 0.0,
-            "Fall" to 0.0,
-            "Winter" to 0.0
-        )
-
-        expenses.forEach { expense ->
-            val season = when (expense.timestamp.month) {
-                Month.MARCH, Month.APRIL, Month.MAY -> "Spring"
-                Month.JUNE, Month.JULY, Month.AUGUST -> "Summer"
-                Month.SEPTEMBER, Month.OCTOBER, Month.NOVEMBER -> "Fall"
-                Month.DECEMBER, Month.JANUARY, Month.FEBRUARY -> "Winter"
-            }
-            seasonalSpending[season] = seasonalSpending[season]!! + expense.amount
-        }
-
-        return seasonalSpending
-    }
-
-    /**
-     * Analyze monthly spending trends
-     */
-    private fun analyzeMonthlyTrends(expenses: List<ExpenseDto>): Map<YearMonth, Double> {
-        return expenses
-            .groupBy { YearMonth.of(it.timestamp.year, it.timestamp.month) }
-            .mapValues { (_, monthExpenses) -> monthExpenses.sumOf { it.amount } }
-            .toSortedMap()
     }
 
     fun clearError() {

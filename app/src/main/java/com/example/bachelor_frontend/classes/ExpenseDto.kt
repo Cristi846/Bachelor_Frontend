@@ -12,5 +12,12 @@ data class ExpenseDto(
     var category: String = "",
     var description: String = "",
     var timestamp: LocalDateTime = LocalDateTime.now(),
-    var receiptImageUrl: String? = null
+    var receiptImageUrl: String? = null,
+    var budgetType: BudgetType = BudgetType.PERSONAL,
+    var familyId: String? = null
 )
+
+enum class BudgetType(val displayName: String){
+    PERSONAL("Personal Budget"),
+    FAMILY("Family Budget")
+}

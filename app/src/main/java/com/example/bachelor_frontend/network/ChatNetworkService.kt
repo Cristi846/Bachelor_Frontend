@@ -37,9 +37,6 @@ class ChatNetworkService {
         val extractedData: Map<String, Any>?
     )
 
-    /**
-     * Test basic connectivity
-     */
     suspend fun testConnection(): Result<String> {
         return withContext(Dispatchers.IO) {
             try {
@@ -73,9 +70,6 @@ class ChatNetworkService {
         }
     }
 
-    /**
-     * Test with a simple POST request
-     */
     suspend fun testPost(): Result<String> {
         return withContext(Dispatchers.IO) {
             try {
@@ -94,9 +88,6 @@ class ChatNetworkService {
         }
     }
 
-    /**
-     * Parse an expense message using the backend
-     */
     suspend fun parseExpenseMessage(
         message: String,
         userId: String,
@@ -139,13 +130,11 @@ class ChatNetworkService {
         connection.connectTimeout = 10000
         connection.readTimeout = 10000
 
-        // Write request body
         val writer = OutputStreamWriter(connection.outputStream)
         writer.write(jsonBody)
         writer.flush()
         writer.close()
 
-        // Read response
         val responseCode = connection.responseCode
         Log.d("ChatNetwork", "Response code: $responseCode")
 

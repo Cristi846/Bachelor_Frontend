@@ -5,17 +5,9 @@ import java.time.LocalDateTime
 import java.util.*
 import java.util.regex.Pattern
 
-/**
- * Utility class for parsing natural language expense descriptions
- * Examples:
- * - "I bought from Auchan in value of 200 lei"
- * - "Spent 50 euros at McDonald's for food"
- * - "Bought groceries for 75 dollars"
- * - "Gas station 40 RON"
- */
+
 class ExpenseChatParser {
 
-    // Currency patterns with their symbols
     private val currencyPatterns = mapOf(
         "RON" to listOf("ron", "lei", "leu"),
         "EUR" to listOf("eur", "euro", "euros", "€"),
@@ -23,25 +15,17 @@ class ExpenseChatParser {
         "GBP" to listOf("gbp", "pound", "pounds", "£")
     )
 
-    // Amount extraction patterns
     private val amountPatterns = listOf(
-        // "200 lei", "50 euros", "75 dollars"
         Pattern.compile("(\\d+(?:\\.\\d{1,2})?)\\s*(${currencyPatterns.values.flatten().joinToString("|")})", Pattern.CASE_INSENSITIVE),
-        // "value of 200", "cost 150", "price 75"
         Pattern.compile("(?:value|cost|price|worth)\\s*(?:of|is)?\\s*(\\d+(?:\\.\\d{1,2})?)", Pattern.CASE_INSENSITIVE),
-        // "spent 50", "paid 100"
         Pattern.compile("(?:spent|paid|buy|bought)\\s*(?:for)?\\s*(\\d+(?:\\.\\d{1,2})?)", Pattern.CASE_INSENSITIVE)
     )
 
-    // Merchant/location extraction patterns
     private val merchantPatterns = listOf(
-        // "from Auchan", "at McDonald's"
         Pattern.compile("(?:from|at|in)\\s+([A-Za-z][A-Za-z0-9\\s&'.-]{1,30}?)(?:\\s+(?:for|in|on|with|value|cost|price|\\d))", Pattern.CASE_INSENSITIVE),
-        // "Auchan store", "McDonald's restaurant"
         Pattern.compile("([A-Za-z][A-Za-z0-9\\s&'.-]{1,30})\\s+(?:store|shop|restaurant|market|mall|station)", Pattern.CASE_INSENSITIVE)
     )
 
-    // Category mapping based on keywords
     private val categoryKeywords = mapOf(
         "Food" to listOf(
             "food", "eat", "restaurant", "cafe", "coffee", "lunch", "dinner", "breakfast",
@@ -80,29 +64,22 @@ class ExpenseChatParser {
         val merchant: String?,
         val category: String?,
         val description: String?,
-        val confidence: Float // 0.0 to 1.0
+        val confidence: Float
     )
 
-    /**
-     * Parse a natural language expense description
-     */
     fun parseExpenseMessage(message: String, defaultCurrency: String = "USD"): ParsedExpense {
         val cleanMessage = message.trim().toLowerCase()
         var confidence = 0.0f
 
-        // Extract amount and currency
         val (amount, currency) = extractAmountAndCurrency(message, defaultCurrency)
         if (amount != null) confidence += 0.4f
 
-        // Extract merchant/location
         val merchant = extractMerchant(message)
         if (merchant != null) confidence += 0.3f
 
-        // Determine category
         val category = categorizeExpense(cleanMessage, merchant)
         if (category != "Other") confidence += 0.2f
 
-        // Generate description
         val description = generateDescription(message, merchant, amount, currency)
         if (description.isNotEmpty()) confidence += 0.1f
 
@@ -116,9 +93,6 @@ class ExpenseChatParser {
         )
     }
 
-    /**
-     * Convert ParsedExpense to ExpenseDto
-     */
     fun createExpenseFromParsed(
         parsed: ParsedExpense,
         userId: String,
@@ -126,10 +100,7 @@ class ExpenseChatParser {
     ): ExpenseDto? {
         if (parsed.amount == null) return null
 
-        // Convert currency if needed
         val finalAmount = if (parsed.currency != null && parsed.currency != userCurrency) {
-            // Here you could implement currency conversion
-            // For now, we'll just use the amount as-is
             parsed.amount
         } else {
             parsed.amount
@@ -153,7 +124,6 @@ class ExpenseChatParser {
                 val amountStr = matcher.group(1)
                 val amount = amountStr?.toDoubleOrNull()
 
-                // Try to find currency in the same match or nearby
                 val currency = if (matcher.groupCount() > 1) {
                     findCurrencyFromText(matcher.group(2))
                 } else {
@@ -191,7 +161,6 @@ class ExpenseChatParser {
     private fun categorizeExpense(message: String, merchant: String?): String {
         val textToAnalyze = "$message ${merchant ?: ""}".toLowerCase()
 
-        // Find the category with the most keyword matches
         var bestCategory = "Other"
         var maxMatches = 0
 
@@ -218,13 +187,10 @@ class ExpenseChatParser {
             merchant != null && amount != null -> "Purchase at $merchant"
             merchant != null -> "Expense at $merchant"
             amount != null -> "Expense via chat"
-            else -> originalMessage.take(50) // Fallback to truncated original message
+            else -> originalMessage.take(50)
         }
     }
 
-    /**
-     * Get suggestions for ambiguous messages
-     */
     fun getSuggestions(message: String): List<String> {
         val suggestions = mutableListOf<String>()
         val parsed = parseExpenseMessage(message)

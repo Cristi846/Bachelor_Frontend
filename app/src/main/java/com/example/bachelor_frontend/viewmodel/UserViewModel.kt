@@ -1,5 +1,6 @@
 package com.example.bachelor_frontend.viewmodel
 
+import android.app.Application
 import android.net.Uri
 import android.util.Log
 import androidx.lifecycle.ViewModel
@@ -75,9 +76,15 @@ class UserViewModel : ViewModel() {
                     // Basic user info from Firebase Auth
                     _userName.value = currentUser.displayName ?: "User"
                     _userEmail.value = currentUser.email ?: ""
-                    _userPhotoUrl.value = currentUser.photoUrl?.toString()
 
-                    Log.d("UserViewModel", "Loaded photo URL: ${_userPhotoUrl.value}")
+                    // Force refresh user data from Firebase Auth to get latest photo URL
+                    withContext(Dispatchers.IO) {
+                        currentUser.reload().await()
+                    }
+
+                    // Get the photo URL from refreshed user data
+                    val authPhotoUrl = currentUser.photoUrl?.toString()
+                    Log.d("UserViewModel", "Auth photo URL: $authPhotoUrl")
 
                     // Format account creation date
                     val creationTime = currentUser.metadata?.creationTimestamp ?: 0
@@ -94,6 +101,15 @@ class UserViewModel : ViewModel() {
                     }
 
                     if (userDoc.exists()) {
+                        // Try to get photo URL from Firestore first, then fall back to Auth
+                        val firestorePhotoUrl = userDoc.getString("photoUrl")
+                        val finalPhotoUrl = firestorePhotoUrl ?: authPhotoUrl
+
+                        Log.d("UserViewModel", "Firestore photo URL: $firestorePhotoUrl")
+                        Log.d("UserViewModel", "Final photo URL: $finalPhotoUrl")
+
+                        _userPhotoUrl.value = finalPhotoUrl
+
                         // Monthly budget
                         val budget = userDoc.getDouble("monthlyBudget") ?: 0.0
                         _monthlyBudget.value = budget
@@ -132,6 +148,8 @@ class UserViewModel : ViewModel() {
                     } else {
                         // If no user document exists, create one with default values
                         createUserDocument(currentUser.uid)
+                        // Set photo URL from Auth if available
+                        _userPhotoUrl.value = authPhotoUrl
                     }
                 }
 
@@ -151,12 +169,20 @@ class UserViewModel : ViewModel() {
                 val defaultCategories = getDefaultCategories()
                 val defaultCategoryBudgets = defaultCategories.associateWith { 0.0 }
 
-                val userData = hashMapOf(
+                // Get current photo URL from Auth if available
+                val currentPhotoUrl = auth.currentUser?.photoUrl?.toString()
+
+                val userData = hashMapOf<String, Any>(
                     "monthlyBudget" to 0.0,
                     "currency" to "USD",
                     "expenseCategories" to defaultCategories,
                     "categoryBudgets" to defaultCategoryBudgets
                 )
+
+                // Add photo URL if available
+                currentPhotoUrl?.let {
+                    userData["photoUrl"] = it
+                }
 
                 withContext(Dispatchers.IO) {
                     db.collection("users")
@@ -169,6 +195,7 @@ class UserViewModel : ViewModel() {
                 _monthlyBudget.value = 0.0
                 _currency.value = "USD"
                 _categoryBudgets.value = defaultCategoryBudgets
+                _userPhotoUrl.value = currentPhotoUrl
 
             } catch (e: Exception) {
                 Log.e("UserViewModel", "Error creating user document", e)
@@ -234,6 +261,7 @@ class UserViewModel : ViewModel() {
 
             withContext(Dispatchers.IO) {
                 currentUser.updateProfile(profileUpdates).await()
+                currentUser.reload().await() // Reload to ensure changes are reflected
             }
 
             _userName.value = newName
@@ -249,63 +277,199 @@ class UserViewModel : ViewModel() {
         }
     }
 
-    suspend fun updateUserPhoto(photoUri: String) {
+    suspend fun updateUserEmail(newEmail: String) {
         try {
             _loading.value = true
 
             val currentUser = auth.currentUser ?: return
 
-            Log.d("UserViewModel", "Updating photo with URI: $photoUri")
-
-            // Upload image to Firebase Storage
-            val storageRef = storage.reference
-                .child("profile_images")
-                .child("${currentUser.uid}_${System.currentTimeMillis()}.jpg")
-
+            // Update email in Firebase Auth
             withContext(Dispatchers.IO) {
-                storageRef.putFile(Uri.parse(photoUri)).await()
+                currentUser.updateEmail(newEmail).await()
+                currentUser.reload().await() // Reload to ensure changes are reflected
             }
 
-            // Get download URL
-            val downloadUrl = withContext(Dispatchers.IO) {
-                storageRef.downloadUrl.await()
-            }
-
-            Log.d("UserViewModel", "Uploaded photo, download URL: $downloadUrl")
-
-            // Update the Firestore user document with the photo URL
-            withContext(Dispatchers.IO) {
-                db.collection("users")
-                    .document(currentUser.uid)
-                    .update("photoUrl", downloadUrl.toString())
-                    .await()
-            }
-
-            // Update profile photo URL in Firebase Auth
-            val profileUpdates = UserProfileChangeRequest.Builder()
-                .setPhotoUri(downloadUrl)
-                .build()
-
-            withContext(Dispatchers.IO) {
-                currentUser.updateProfile(profileUpdates).await()
-                // Force refresh the user data to ensure changes are reflected
-                currentUser.reload().await()
-            }
-
-            _userPhotoUrl.value = downloadUrl.toString()
-            Log.d("UserViewModel", "Updated photo URL in state: ${_userPhotoUrl.value}")
-
+            _userEmail.value = newEmail
             _error.value = null
 
             // Trigger update for other ViewModels
             triggerUpdate()
         } catch (e: Exception) {
-            Log.e("UserViewModel", "Error updating user photo", e)
-            _error.value = "Failed to update photo: ${e.message}"
+            Log.e("UserViewModel", "Error updating user email", e)
+            _error.value = "Failed to update email: ${e.message}"
         } finally {
             _loading.value = false
         }
     }
+
+    suspend fun updateUserPhoto(photoUri: String) {
+        try {
+            _loading.value = true
+            Log.d("UserViewModel", "=== STARTING PHOTO UPDATE ===")
+            Log.d("UserViewModel", "Input URI: $photoUri")
+
+            val currentUser = auth.currentUser
+            if (currentUser == null) {
+                Log.e("UserViewModel", "Current user is null!")
+                _error.value = "User not authenticated"
+                return
+            }
+
+            // Step 1: Validate and parse URI
+            val uri = try {
+                Uri.parse(photoUri)
+            } catch (e: Exception) {
+                Log.e("UserViewModel", "Invalid URI format: $photoUri", e)
+                _error.value = "Invalid photo selected"
+                return
+            }
+
+            // Step 2: Verify URI can be accessed (important for content:// URIs)
+            val context = getApplication().applicationContext
+            try {
+                val inputStream = context.contentResolver.openInputStream(uri)
+                if (inputStream == null) {
+                    Log.e("UserViewModel", "Cannot open input stream for URI: $uri")
+                    _error.value = "Cannot access selected photo"
+                    return
+                }
+                inputStream.close()
+                Log.d("UserViewModel", "URI validation successful")
+            } catch (e: Exception) {
+                Log.e("UserViewModel", "Cannot access URI: $uri", e)
+                _error.value = "Cannot access selected photo"
+                return
+            }
+
+            // Step 3: Create storage reference with proper path
+            val fileName = "${currentUser.uid}_${System.currentTimeMillis()}.jpg"
+            val storageRef = storage.reference
+                .child("profile_images")
+                .child(fileName)
+
+            Log.d("UserViewModel", "Storage path: ${storageRef.path}")
+
+            // Step 4: Upload file with proper error handling
+            Log.d("UserViewModel", "Starting upload...")
+            val uploadResult = withContext(Dispatchers.IO) {
+                try {
+                    // Use putFile with the URI directly
+                    val uploadTask = storageRef.putFile(uri)
+
+                    // Wait for completion
+                    val result = uploadTask.await()
+
+                    Log.d("UserViewModel", "Upload completed successfully")
+                    Log.d("UserViewModel", "Bytes transferred: ${result.metadata?.sizeBytes}")
+
+                    result
+                } catch (e: Exception) {
+                    Log.e("UserViewModel", "Upload failed", e)
+                    when (e) {
+                        is com.google.firebase.storage.StorageException -> {
+                            Log.e("UserViewModel", "Storage exception code: ${e.errorCode}")
+                            Log.e("UserViewModel", "Storage exception message: ${e.message}")
+                        }
+                    }
+                    throw e
+                }
+            }
+
+            // Step 5: Get download URL - WAIT before trying to get URL
+            Log.d("UserViewModel", "Getting download URL...")
+            val downloadUrl = withContext(Dispatchers.IO) {
+                try {
+                    // Small delay to ensure upload is fully processed
+                    kotlinx.coroutines.delay(1000)
+
+                    val url = storageRef.downloadUrl.await()
+                    Log.d("UserViewModel", "Download URL: $url")
+                    url
+                } catch (e: Exception) {
+                    Log.e("UserViewModel", "Failed to get download URL", e)
+                    throw e
+                }
+            }
+
+            val downloadUrlString = downloadUrl.toString()
+
+            // Step 6: Update Firestore first
+            Log.d("UserViewModel", "Updating Firestore...")
+            withContext(Dispatchers.IO) {
+                try {
+                    val updates = hashMapOf<String, Any>(
+                        "photoUrl" to downloadUrlString,
+                        "photoUpdatedAt" to com.google.firebase.Timestamp.now()
+                    )
+
+                    db.collection("users")
+                        .document(currentUser.uid)
+                        .update(updates)
+                        .await()
+
+                    Log.d("UserViewModel", "Firestore updated successfully")
+                } catch (e: Exception) {
+                    Log.e("UserViewModel", "Firestore update failed", e)
+                    throw e
+                }
+            }
+
+            // Step 7: Update Firebase Auth profile
+            Log.d("UserViewModel", "Updating Auth profile...")
+            withContext(Dispatchers.IO) {
+                try {
+                    val profileUpdates = UserProfileChangeRequest.Builder()
+                        .setPhotoUri(downloadUrl)
+                        .build()
+
+                    currentUser.updateProfile(profileUpdates).await()
+                    currentUser.reload().await()
+
+                    Log.d("UserViewModel", "Auth profile updated successfully")
+                } catch (e: Exception) {
+                    Log.e("UserViewModel", "Auth update failed", e)
+                    // Don't throw here - Firestore update was successful
+                    Log.w("UserViewModel", "Continuing despite Auth update failure")
+                }
+            }
+
+            // Step 8: Update local state
+            _userPhotoUrl.value = downloadUrlString
+            _error.value = null
+
+            Log.d("UserViewModel", "Photo update completed successfully!")
+            Log.d("UserViewModel", "Final photo URL: $downloadUrlString")
+
+            // Trigger update for other ViewModels
+            triggerUpdate()
+
+        } catch (e: Exception) {
+            Log.e("UserViewModel", "Photo update failed completely", e)
+            _error.value = when (e) {
+                is com.google.firebase.storage.StorageException -> {
+                    when (e.errorCode) {
+                        com.google.firebase.storage.StorageException.ERROR_OBJECT_NOT_FOUND ->
+                            "Upload failed - file not found"
+                        com.google.firebase.storage.StorageException.ERROR_BUCKET_NOT_FOUND ->
+                            "Storage configuration error"
+                        com.google.firebase.storage.StorageException.ERROR_PROJECT_NOT_FOUND ->
+                            "Project configuration error"
+                        com.google.firebase.storage.StorageException.ERROR_QUOTA_EXCEEDED ->
+                            "Storage quota exceeded"
+                        com.google.firebase.storage.StorageException.ERROR_RETRY_LIMIT_EXCEEDED ->
+                            "Upload timeout - please try again"
+                        else -> "Upload failed: ${e.message}"
+                    }
+                }
+                is java.io.IOException -> "Cannot access photo file"
+                is java.net.UnknownHostException -> "No internet connection"
+                else -> "Failed to update photo: ${e.message}"
+            }
+        } finally {
+            _loading.value = false
+        }
+    }
+
 
     suspend fun updateMonthlyBudget(budget: Double) {
         try {
@@ -463,5 +627,17 @@ class UserViewModel : ViewModel() {
 
     fun clearError() {
         _error.value = null
+    }
+
+    private fun getApplication(): Application {
+        return try {
+            // This assumes you're using AndroidViewModel
+            // If using regular ViewModel, you'll need to pass context differently
+            Class.forName("android.app.Application")
+                .getDeclaredMethod("getApplication")
+                .invoke(null) as Application
+        } catch (e: Exception) {
+            throw IllegalStateException("Cannot get Application context", e)
+        }
     }
 }

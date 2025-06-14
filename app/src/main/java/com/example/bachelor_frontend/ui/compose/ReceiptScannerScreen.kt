@@ -28,12 +28,17 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
+import androidx.lifecycle.viewmodel.compose.viewModel
+import com.example.bachelor_frontend.classes.BudgetType
 import com.example.bachelor_frontend.classes.ExpenseDto
+import com.example.bachelor_frontend.classes.FamilyDto
 import com.example.bachelor_frontend.ui.function.ReceiptScanner
+import com.example.bachelor_frontend.viewmodel.FamilyViewModel
 import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.*
@@ -43,8 +48,9 @@ import java.util.concurrent.Executors
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ReceiptScannerScreen(
-    onCaptureSuccess: (ExpenseDto) -> Unit,
-    onCancel: () -> Unit
+    onCaptureSuccess: (ExpenseDto, BudgetType) -> Unit,
+    onCancel: () -> Unit,
+    familyViewModel: FamilyViewModel = viewModel()
 ) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -58,6 +64,9 @@ fun ReceiptScannerScreen(
         )
     }
 
+    val userFamily by familyViewModel.family.collectAsState()
+    var selectedBudgetType by remember { mutableStateOf(BudgetType.PERSONAL) }
+
     val permissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
     ) { isGranted ->
@@ -70,8 +79,6 @@ fun ReceiptScannerScreen(
         }
     }
 
-    // Create a shared state for the ImageCapture instance that will be accessible
-    // to both the CameraView and the take photo button
     var imageCaptureState by remember { mutableStateOf<ImageCapture?>(null) }
     var processingImage by remember { mutableStateOf(false) }
     var showOCRResult by remember { mutableStateOf(false) }
@@ -101,25 +108,25 @@ fun ReceiptScannerScreen(
                 .padding(paddingValues)
         ) {
             if (showOCRResult && ocrResult != null) {
-                // Show OCR results for confirmation
                 ReceiptResultsScreen(
                     receiptData = ocrResult!!,
                     detectedExpense = detectedExpense,
-                    onConfirm = { confirmedExpense ->
-                        onCaptureSuccess(confirmedExpense)
+                    onConfirm = { confirmedExpense, budgetType ->
+                        onCaptureSuccess(confirmedExpense, budgetType)
                     },
                     onRetry = {
                         showOCRResult = false
                         processingImage = false
                     },
-                    onCancel = onCancel
+                    onCancel = onCancel,
+                    userFamily = userFamily,
+                    selectedBudgetType = selectedBudgetType,
+                    onBudgetTypeChange = { selectedBudgetType = it }
                 )
             } else if (hasCameraPermission) {
-                // Camera preview
                 CameraView(
                     executor = executor,
                     onImageCaptureCreated = { capture ->
-                        // Update the shared ImageCapture reference
                         imageCaptureState = capture
                         Log.d("ReceiptScannerScreen", "ImageCapture created and shared")
                     },
@@ -147,7 +154,6 @@ fun ReceiptScannerScreen(
                     }
                 )
 
-                // Capture button
                 Column(
                     modifier = Modifier
                         .align(Alignment.BottomCenter)
@@ -200,7 +206,7 @@ fun ReceiptScannerScreen(
                                                     ocrResult = result
 
                                                     if (result.success) {
-                                                        val userId = "currentUserId" // Replace with actual user ID
+                                                        val userId = "currentUserId"
                                                         detectedExpense = receiptScanner.createExpenseFromReceipt(result, userId).copy(
                                                             receiptImageUrl = uri.toString()
                                                         )
@@ -230,7 +236,6 @@ fun ReceiptScannerScreen(
                     }
                 }
             } else {
-                // Request camera permission
                 Column(
                     modifier = Modifier
                         .fillMaxSize()
@@ -250,7 +255,6 @@ fun ReceiptScannerScreen(
                 }
             }
 
-            // Show loading indicator when processing
             if (processingImage) {
                 Box(
                     modifier = Modifier
@@ -278,7 +282,7 @@ fun ReceiptScannerScreen(
 @Composable
 fun CameraView(
     executor: Executor,
-    onImageCaptureCreated: (ImageCapture) -> Unit, // New parameter
+    onImageCaptureCreated: (ImageCapture) -> Unit,
     onImageCaptured: (Uri) -> Unit,
     onError: (String) -> Unit
 ) {
@@ -300,12 +304,10 @@ fun CameraView(
                         it.setSurfaceProvider(previewView.surfaceProvider)
                     }
 
-                    // Create ImageCapture instance
                     val imageCapture = ImageCapture.Builder()
                         .setCaptureMode(ImageCapture.CAPTURE_MODE_MAXIMIZE_QUALITY)
                         .build()
 
-                    // Immediately share the reference with parent
                     onImageCaptureCreated(imageCapture)
 
                     Log.d("CameraView", "Setting up camera with ImageCapture instance")
@@ -336,7 +338,6 @@ fun CameraView(
 
     DisposableEffect(Unit) {
         onDispose {
-            // Clean up resources when the composable is disposed
             Log.d("CameraView", "Disposing CameraView")
         }
     }
@@ -408,9 +409,12 @@ private fun takePhoto(
 fun ReceiptResultsScreen(
     receiptData: ReceiptScanner.ReceiptData,
     detectedExpense: ExpenseDto?,
-    onConfirm: (ExpenseDto) -> Unit,
+    onConfirm: (ExpenseDto, BudgetType) -> Unit,
     onRetry: () -> Unit,
-    onCancel: () -> Unit
+    onCancel: () -> Unit,
+    userFamily: FamilyDto?, // Add family data
+    selectedBudgetType: BudgetType, // Add budget type
+    onBudgetTypeChange: (BudgetType) -> Unit // Add budget type change handler
 ) {
     var amount by remember { mutableStateOf(detectedExpense?.amount?.toString() ?: "") }
     var category by remember { mutableStateOf(detectedExpense?.category ?: "Other") }
@@ -501,6 +505,37 @@ fun ReceiptResultsScreen(
                         modifier = Modifier.fillMaxWidth()
                     )
 
+                    if (userFamily != null) {
+                        Spacer(modifier = Modifier.height(12.dp))
+
+                        Text(
+                            text = "Add to:",
+                            style = MaterialTheme.typography.labelMedium,
+                            fontWeight = FontWeight.Bold
+                        )
+
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(top = 8.dp),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            FilterChip(
+                                selected = selectedBudgetType == BudgetType.PERSONAL,
+                                onClick = { onBudgetTypeChange(BudgetType.PERSONAL) },
+                                label = { Text("Personal") },
+                                modifier = Modifier.weight(1f)
+                            )
+
+                            FilterChip(
+                                selected = selectedBudgetType == BudgetType.FAMILY,
+                                onClick = { onBudgetTypeChange(BudgetType.FAMILY) },
+                                label = { Text("Family") },
+                                modifier = Modifier.weight(1f)
+                            )
+                        }
+                    }
+
                     if (receiptData.merchantName.isNotEmpty()) {
                         Text(
                             text = "Merchant: ${receiptData.merchantName}",
@@ -545,8 +580,10 @@ fun ReceiptResultsScreen(
                             onConfirm(expense.copy(
                                 amount = amountValue,
                                 category = category,
-                                description = description
-                            ))
+                                description = description,
+                                budgetType = selectedBudgetType,
+                                familyId = if (selectedBudgetType == BudgetType.FAMILY) userFamily?.id else null
+                            ), selectedBudgetType)
                         }
                     },
                     modifier = Modifier.weight(1f),

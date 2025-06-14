@@ -1,6 +1,7 @@
 package com.example.bachelor_frontend.ui.pages
 
 import android.net.Uri
+import android.util.Log
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.border
@@ -23,10 +24,13 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.DpOffset
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.PopupProperties
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
+import com.example.bachelor_frontend.classes.BudgetType
 import com.example.bachelor_frontend.classes.ExpenseDto
+import com.example.bachelor_frontend.viewmodel.FamilyViewModel
 import java.time.LocalDateTime
 import java.util.*
 
@@ -35,25 +39,31 @@ import java.util.*
 fun AddExpenseScreen(
     categories: List<String>,
     userId: String,
-    onSaveExpense: (ExpenseDto) -> Unit,
+    onSaveExpense: (ExpenseDto, BudgetType) -> Unit,
     onCancel: () -> Unit,
+    familyViewModel: FamilyViewModel,
     initialExpense: ExpenseDto? = null,
-    onScanReceipt: () -> Unit
+    onScanReceipt: () -> Unit,
+    initialBudgetType: BudgetType = BudgetType.PERSONAL,
+    onDocumentScan: () -> Unit = {}
 ) {
     val context = LocalContext.current
 
-    // State for form fields
     var amount by remember { mutableStateOf(initialExpense?.amount?.toString() ?: "") }
     var category by remember { mutableStateOf(initialExpense?.category ?: categories.firstOrNull() ?: "") }
     var description by remember { mutableStateOf(initialExpense?.description ?: "") }
     var receiptImageUri by remember { mutableStateOf<Uri?>(initialExpense?.receiptImageUrl?.let { Uri.parse(it) }) }
+
+    val shouldDefaultToFamily = initialBudgetType == BudgetType.PERSONAL
+
+    var selectedBudgetType by remember { mutableStateOf(if(shouldDefaultToFamily) BudgetType.FAMILY else initialBudgetType)}
+    val userFamily by familyViewModel.family.collectAsState()
+
     var showCategoryDropdown by remember { mutableStateOf(false) }
 
-    // For validation
     var showErrorMessage by remember { mutableStateOf(false) }
     var errorMessage by remember { mutableStateOf("") }
 
-    // Image picker launcher
     val imagePicker = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.GetContent()
     ) { uri ->
@@ -89,7 +99,6 @@ fun AddExpenseScreen(
                 .verticalScroll(rememberScrollState()),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
-            // Receipt capture options - prominent positioning
             Card(
                 modifier = Modifier.fillMaxWidth(),
                 elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
@@ -115,6 +124,7 @@ fun AddExpenseScreen(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
+
                         Button(
                             onClick = onScanReceipt,
                             modifier = Modifier.weight(1f),
@@ -139,7 +149,84 @@ fun AddExpenseScreen(
                 }
             }
 
-            // Amount field
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.7f)
+                )
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(16.dp)
+                ) {
+                    Text(
+                        text = "Add expense to:",
+                        style = MaterialTheme.typography.titleMedium,
+                        color = MaterialTheme.colorScheme.onSecondaryContainer
+                    )
+
+                    Spacer(modifier = Modifier.height(12.dp))
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        // Personal Budget Option
+                        FilterChip(
+                            selected = selectedBudgetType == BudgetType.PERSONAL,
+                            onClick = { selectedBudgetType = BudgetType.PERSONAL },
+                            label = {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Icon(
+                                        Icons.Default.Person,
+                                        contentDescription = null,
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Text("Personal")
+                                }
+                            },
+                            modifier = Modifier.weight(1f)
+                        )
+
+                        // Family Budget Option (only if user has a family)
+                        if (userFamily != null) {
+                            FilterChip(
+                                selected = selectedBudgetType == BudgetType.FAMILY,
+                                onClick = { selectedBudgetType = BudgetType.FAMILY },
+                                label = {
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Icon(
+                                            Icons.Default.Groups,
+                                            contentDescription = null,
+                                            modifier = Modifier.size(18.dp)
+                                        )
+                                        Spacer(modifier = Modifier.width(4.dp))
+                                        Text("Family")
+                                    }
+                                },
+                                modifier = Modifier.weight(1f)
+                            )
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    // Budget info text
+                    Text(
+                        text = if (selectedBudgetType == BudgetType.FAMILY && userFamily != null) {
+                            "Will count towards ${userFamily!!.name}'s shared budget"
+                        } else {
+                            "Will count towards your personal budget"
+                        },
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.7f)
+                    )
+                }
+            }
+
             OutlinedTextField(
                 value = amount,
                 onValueChange = { amount = it },
@@ -150,7 +237,6 @@ fun AddExpenseScreen(
                 isError = showErrorMessage && amount.toDoubleOrNull() == null
             )
 
-            // Category dropdown - FIXED VERSION
             Column {
                 OutlinedTextField(
                     value = category,
@@ -194,7 +280,6 @@ fun AddExpenseScreen(
                 }
             }
 
-            // Description field
             OutlinedTextField(
                 value = description,
                 onValueChange = { description = it },
@@ -203,7 +288,6 @@ fun AddExpenseScreen(
                 modifier = Modifier.fillMaxWidth()
             )
 
-            // Receipt image preview (if present)
             if (receiptImageUri != null) {
                 Card(
                     modifier = Modifier.fillMaxWidth(),
@@ -258,7 +342,6 @@ fun AddExpenseScreen(
                 }
             }
 
-            // Error message
             if (showErrorMessage && errorMessage.isNotEmpty()) {
                 Text(
                     text = errorMessage,
@@ -267,7 +350,6 @@ fun AddExpenseScreen(
                 )
             }
 
-            // Save and Cancel buttons
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -283,7 +365,6 @@ fun AddExpenseScreen(
 
                 Button(
                     onClick = {
-                        // Validate input
                         val amountValue = amount.toDoubleOrNull()
                         when {
                             amountValue == null -> {
@@ -299,22 +380,30 @@ fun AddExpenseScreen(
                                 showErrorMessage = true
                             }
                             else -> {
-                                // Create or update expense
-                                val expense = initialExpense?.copy(
-                                    amount = amountValue,
-                                    category = category,
-                                    description = description,
-                                    receiptImageUrl = receiptImageUri?.toString()
-                                ) ?: ExpenseDto(
-                                    id = UUID.randomUUID().toString(),
-                                    userId = userId,
-                                    amount = amountValue,
-                                    category = category,
-                                    description = description,
-                                    timestamp = LocalDateTime.now(),
-                                    receiptImageUrl = receiptImageUri?.toString()
-                                )
-                                onSaveExpense(expense)
+                                val expense =  initialExpense?.copy(
+                                        amount = amountValue,
+                                        category = category,
+                                        description = description,
+                                        receiptImageUrl = receiptImageUri?.toString() ,
+                                        budgetType = selectedBudgetType,
+                                        familyId = if (selectedBudgetType == BudgetType.FAMILY) userFamily?.id else null
+                                    )?: ExpenseDto(
+                                        id = "",
+                                        userId = userId,
+                                        amount = amountValue,
+                                        category = category,
+                                        description = description,
+                                        timestamp = LocalDateTime.now(),
+                                        receiptImageUrl = receiptImageUri?.toString(),
+                                        budgetType = selectedBudgetType,
+                                        familyId = if (selectedBudgetType == BudgetType.FAMILY) userFamily?.id else null
+                                    )
+
+                                Log.d("AddExpenseScreen", "Creating expense: $expense")
+                                Log.d("AddExpenseScreen", "Budget type: $selectedBudgetType")
+                                Log.d("AddExpenseScreen", "Family ID: ${expense.familyId}")
+
+                                onSaveExpense(expense, selectedBudgetType)
                             }
                         }
                     },

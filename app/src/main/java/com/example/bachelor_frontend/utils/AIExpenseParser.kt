@@ -9,13 +9,8 @@ import java.net.URL
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
-/**
- * AI-powered expense parser using OpenAI API
- * This is an advanced version that can handle more complex natural language
- */
 class AIExpenseParser {
 
-    // You'll need to add your OpenAI API key here
     private val apiKey = "YOUR_OPENAI_API_KEY_HERE"
     private val apiUrl = "https://api.openai.com/v1/chat/completions"
 
@@ -100,13 +95,11 @@ class AIExpenseParser {
             put("temperature", 0.1)
         }
 
-        // Send request
         val writer = OutputStreamWriter(connection.outputStream)
         writer.write(requestBody.toString())
         writer.flush()
         writer.close()
 
-        // Read response
         val reader = BufferedReader(InputStreamReader(connection.inputStream))
         val response = reader.readText()
         reader.close()
@@ -122,7 +115,6 @@ class AIExpenseParser {
             val message = firstChoice.getJSONObject("message")
             val content = message.getString("content")
 
-            // Parse the JSON content
             val expenseJson = JSONObject(content.trim())
 
             return AIExpenseResult(
@@ -148,27 +140,20 @@ class AIExpenseParser {
     }
 }
 
-/**
- * Hybrid parser that tries rule-based first, then falls back to AI
- */
 class HybridExpenseParser {
     private val ruleBasedParser = ExpenseChatParser()
     private val aiParser = AIExpenseParser()
 
     suspend fun parseExpense(message: String, userCurrency: String = "USD"): ExpenseChatParser.ParsedExpense {
-        // Try rule-based parsing first
         val ruleBasedResult = ruleBasedParser.parseExpenseMessage(message, userCurrency)
 
-        // If confidence is high enough, use rule-based result
         if (ruleBasedResult.confidence >= 0.7f) {
             return ruleBasedResult
         }
 
-        // Otherwise, try AI parsing
         try {
             val aiResult = aiParser.parseExpenseWithAI(message, userCurrency)
 
-            // Convert AI result to ParsedExpense format
             return ExpenseChatParser.ParsedExpense(
                 amount = aiResult.amount,
                 currency = aiResult.currency,
@@ -178,7 +163,6 @@ class HybridExpenseParser {
                 confidence = aiResult.confidence
             )
         } catch (e: Exception) {
-            // Fall back to rule-based result if AI fails
             return ruleBasedResult
         }
     }
